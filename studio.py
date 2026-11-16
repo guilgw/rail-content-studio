@@ -18,6 +18,7 @@ import llm
 import script_store
 import script_edit
 import roughcut_export
+import stock_media
 import topic_feed
 import video_trends
 
@@ -71,11 +72,45 @@ def run_pipeline(args):
             with lock:
                 job["log"].append({"step": step, "msg": msg, "ms": int(ms.replace("ms", "").strip())})
     p.wait()
+    preview = None
+    if p.returncode == 0:
+        try:
+            preview = attach_preview()
+        except Exception:
+            preview = {"step": "合成粗剪", "msg": "成片合成未完成，剪映工程仍已保留。", "ms": 0}
     with lock:
         job["running"] = False
+        if preview:
+            job["log"].append(preview)
         if p.returncode != 0:
             err = next((l for l in reversed(tail) if "Error" in l or "错误" in l or "key" in l), tail[-1] if tail else "未知错误")
             job["error"] = err
+
+
+def attach_preview():
+    """流水线或换镜头之后，渲染一版与当前时间轴一致的竖屏 MP4。"""
+    path = os.path.join(OUT, "result.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as handle:
+        result = json.load(handle)
+    result.pop("preview_mp4", None)
+    try:
+        rendered = roughcut_export.render(ROOT, OUT, result, {})
+        result["preview_mp4"] = {"url": rendered["url"], "filename": rendered["filename"], "duration": rendered["duration"]}
+        result.pop("preview_error", None)
+        note = {"step": "合成粗剪", "msg": "已合成可在浏览器播放的竖屏粗剪", "ms": 0}
+    except Exception as exc:
+        message = str(exc) if isinstance(exc, ValueError) else "成片合成未完成，剪映工程仍已保留。"
+        if re.search(r"key=|api_key|bearer", message, re.I):
+            message = "成片合成未完成，剪映工程仍已保留。"
+        result["preview_error"] = message[:200]
+        note = {"step": "合成粗剪", "msg": result["preview_error"], "ms": 0}
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(result, handle, ensure_ascii=False, indent=2)
+    os.replace(temporary, path)
+    return note
 
 
 class H(BaseHTTPRequestHandler):
@@ -113,10 +148,15 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, dict(job))
         if path == "/api/keys":
             return self._send(200, {"deepseek": bool(llm.model_config("script")["api_key"]), "minimax": llm.has("MINIMAX_API_KEY"), "video": bool(llm.model_config("video")["api_key"]),
-                                    "models": llm.models_in_use()})
+                                    "pixabay": stock_media.configured(), "models": llm.models_in_use()})
         # 静态文件：clips/、thumbs/；audio/ 直接读 output/tts/（每次生成都是新的）
         if re.fullmatch(r"/exports/roughcut-[a-f0-9]{32}\.mp4", path):
             f = os.path.join(OUT, "exports", os.path.basename(path))
+        elif re.fullmatch(r"/output/stock/px[0-9]+\.(mp4|jpg)", path):
+            folder = os.path.realpath(os.path.join(OUT, "stock"))
+            f = os.path.realpath(os.path.join(folder, os.path.basename(path)))
+            if os.path.dirname(f) != folder:
+                return self._send(404, {"error": "not found"})
         elif path.startswith("/audio/"):
             audio_root = os.path.join(OUT, "tts") if os.path.isfile(os.path.join(OUT, "result.json")) else os.path.join(ROOT, "audio")
             f = os.path.join(audio_root, os.path.basename(path))
@@ -143,7 +183,7 @@ class H(BaseHTTPRequestHandler):
                 self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Accept-Ranges", "bytes")
-        if path.startswith("/exports/"):
+        if path.startswith("/exports/") and "download" in urlparse(self.path).query:
             self.send_header("Content-Disposition", f'attachment; filename="{os.path.basename(path)}"')
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -320,6 +360,32 @@ class H(BaseHTTPRequestHandler):
                 with lock:
                     job["running"] = False
             return self._send(200, response)
+        if path in ("/api/stock/search", "/api/stock/import"):
+            if self.headers.get("Origin") not in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"):
+                return self._send(403, {"error": "请从本地工作台搜索素材。"})
+            with lock:
+                if job["running"]:
+                    return self._send(409, {"error": "当前任务正在处理，请完成后再搜索或下载素材。"})
+            try:
+                if not 0 < int(self.headers.get("Content-Length", 0)) <= 8192:
+                    raise ValueError("素材请求过大或为空。")
+                body = self._json()
+                if not isinstance(body, dict):
+                    raise ValueError("素材请求格式不正确。")
+            except (ValueError, TypeError):
+                return self._send(400, {"error": "素材请求格式不正确或超过 8 KB。"})
+            if not stock_media.configured():
+                return self._send(400, {"error": stock_media.MISSING, "configured": False})
+            try:
+                if path == "/api/stock/search":
+                    return self._send(200, stock_media.search(body.get("query")))
+                clip = stock_media.import_video(ROOT, OUT, body.get("video_id"), stock_media.labels(body.get("tags")), stock_media.labels(body.get("places"), 6))
+                stock_media.remember_in_result(OUT, clip)
+                return self._send(200, {"clip": clip, "notice": stock_media.NOTICE})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            except Exception:
+                return self._send(500, {"error": "在线素材处理失败，本地素材和粗剪仍保留。"})
         if path == "/api/run":
             body = self._json()
             topic = (body.get("topic") or "").strip()[:80]
@@ -347,7 +413,14 @@ class H(BaseHTTPRequestHandler):
                 json.dump(swaps, open(sp, "w"), ensure_ascii=False)
                 r = subprocess.run([sys.executable, os.path.join(ROOT, "pipeline.py"), "--redraft", sp], cwd=ROOT, capture_output=True, text=True)
                 if r.returncode != 0:
-                    return self._send(500, {"error": (r.stderr or r.stdout)[-400:]})
+                    detail = (r.stderr or r.stdout or "")[-400:]
+                    if re.search(r"key=|api_key|bearer", detail, re.I):
+                        detail = "写入剪映失败，请查看本机流水线输出。"
+                    return self._send(500, {"error": detail})
+                try:
+                    attach_preview()
+                except Exception:
+                    pass
                 return self._send(200, {"ok": True, "msg": r.stdout.strip()})
             finally:
                 with lock:

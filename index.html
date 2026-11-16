@@ -75,6 +75,9 @@
 @media(max-width:640px){.wrap{padding-inline:16px}.page-head{display:flex;min-height:100px;padding:24px 0}.page-head h1{font-size:25px}.head-actions{margin:0}.head-actions .btn{font-size:11px;min-height:36px;padding:7px 10px}.top{gap:6px;min-height:56px;height:56px}.breadcrumb>span{display:none}.top-tools{gap:8px}.mode,.team-label{display:none}.top-tools .info-button{width:18px;height:18px}.overview-caption{font-size:10px}.stage-overview{padding:18px 6px;gap:18px 0;border-radius:8px}.stage-stop{padding-inline:8px;gap:4px}.stage-name{font-size:12px}.stage-name small{font-size:9px}.stage-stop strong{font-size:22px}.task-list-heading{display:block;margin-top:28px}.task-list-heading input{width:100%;margin:15px 0 12px}.task-filters{gap:22px}.task-list-heading h2{font-size:18px}.overview-bottom{grid-template-columns:1fr;margin-top:28px;gap:28px}.task-table td{padding:16px 12px}.recent-work img{width:90px;height:100px}.task-context{display:block;padding:12px 0;margin-bottom:20px}.task-context>div{justify-content:space-between;gap:8px}.task-context .context-actions{margin-top:8px}.task-context select{min-width:0;max-width:100%;width:100%;font-size:12px}.planning-grid{grid-template-columns:1fr;gap:30px}.planning-grid .ask{gap:12px}.planning-grid #askGo{width:100%}.script-approval{align-items:flex-start;flex-direction:column;font-size:11px}.ops-form{grid-template-columns:1fr;gap:16px}.task-dialog{padding:20px}.asset-collection{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 12px}.asset-item img{height:100px}.asset-toolbar{flex-wrap:wrap;gap:10px}.asset-toolbar input{width:100%}.asset-toolbar .btn{font-size:11px}.analytics-scope{flex-wrap:wrap;font-size:10px}.analytics-scope .btn{margin-left:0}.publication-history .section-head{display:block}.publication-history .section-head>span{display:block;margin-top:8px}.script-versions{gap:24px}.human-review h2,.publish-grid h2,.planning-grid h2,.overview-bottom h2{font-size:18px}}
 @media(max-width:640px){html{overflow-x:clip}}
 @media(prefers-reduced-motion:reduce){.workspace,.modal-card{animation:none}html{scroll-behavior:auto}}
+#master{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#111;z-index:0}
+.stock-form{display:flex;gap:8px;margin:8px 0}#stockQuery{flex:1}.stock-form .btn{flex-shrink:0}
+#stockHits{max-height:240px;overflow:auto;margin-bottom:8px}#stockHits .cand{grid-template-columns:72px minmax(0,1fr) auto}
 
 </style>
 </head>
@@ -104,6 +107,7 @@
       <button type="button" class="btn" data-view="scripts">选用脚本</button>
       <button type="button" class="btn" id="draftBtn" disabled>导入剪映指引</button>
       <button type="button" class="btn primary" id="saveDraftBtn" disabled>写入剪映工程</button>
+      <button type="button" class="btn" id="rerenderBtn" disabled>重新渲染成片</button>
       <button type="button" class="btn" id="exportRoughcutBtn" disabled>导出粗剪 MP4</button>
       <button type="button" class="btn" data-view="evaluate">评测成片 →</button>
     </div>
@@ -160,7 +164,7 @@
           <button class="btn" id="importScript" type="button">收录当前作品</button>
         </div><p id="libraryStatus" class="script-library-status" role="status"></p>
         <div class="script-result-heading"><h2 id="scriptsHeading">脚本</h2><span id="scriptSource"></span></div>
-        <div class="production-actions"><p id="productionStatus" role="status"></p><button class="btn primary" id="produceGo" type="button" disabled>生成配音与粗剪 →</button></div>
+        <div class="production-actions"><p id="productionStatus" role="status"></p><button class="btn primary" id="produceGo" type="button" disabled>开始制作 →</button></div>
         <div class="script-approval"><label><input type="checkbox" id="scriptConfirm">已核对路线、优惠与语言，确认当前版本用于制作</label><span id="scriptConfirmStatus"></span></div><div id="scriptTaskMismatch" class="handoff-note" hidden>当前任务还没有脚本。先在选题策划中生成候选脚本。</div><div id="scriptVersions" class="script-versions"></div>
       </section>
       </section>
@@ -172,13 +176,15 @@
         <section class="material-column" aria-label="素材库">
           <div class="section-head"><h2>素材库</h2><span class="stat-label" id="materialCount"></span></div>
           <input id="materialSearch" class="material-search" type="search" placeholder="搜索名称、地点或标签" aria-label="搜索素材名称、地点或标签">
+          <form id="stockForm" class="stock-form" hidden><input id="stockQuery" class="material-search" type="search" maxlength="80" placeholder="在线搜索 Pixabay，中文或英文" aria-label="在线搜索素材"><button class="btn small" type="submit">搜索</button></form>
+          <p id="stockStatus" class="material-note" role="status"></p><div id="stockHits"></div>
           <select id="materialFilter" class="material-filter" aria-label="素材范围"><option value="all">全部素材</option><option value="used">当前使用</option><option value="candidates">当前分句候选</option></select>
           <div id="materialGrid" class="material-grid"></div>
         </section>
         <section class="preview-column" aria-label="视频预览">
           <div class="section-label"><span>视频预览</span><span class="mono">9:16 · <span id="durationLabel"></span></span></div>
           <div class="monitor">
-            <div class="screen" id="screen"><div class="ph" id="ph"><div><b>从这里开始</b>回放已有运行，查看粗剪结果。</div></div><div class="huazi" id="huazi" hidden></div><div class="sub" id="sub" hidden></div></div>
+            <div class="screen" id="screen"><video id="master" playsinline preload="metadata" hidden></video><div class="ph" id="ph"><div><b>从这里开始</b>回放已有运行，查看粗剪结果。</div></div><div class="huazi" id="huazi" hidden></div><div class="sub" id="sub" hidden></div></div>
             <div class="transport"><button class="play" id="play" aria-label="播放" disabled><svg viewBox="0 0 16 16" id="playIc"><path d="M4 2l10 6-10 6z"/></svg></button><input class="scrub" id="scrub" type="range" min="0" max="1" value="0" step="0.05" aria-label="视频进度" disabled><span class="tc mono" id="tc">00:00.0 / 00:00.0</span></div>
 
           </div>
@@ -218,7 +224,7 @@
       <div class="connection-intro"><h2>一条作品怎么完成</h2><span id="connectionMode"></span></div>
       <ol class="workflow-map">
         <li><span class="workflow-number">1</span><h3>生成并选用脚本</h3><p>输入选题 → 模型生成三版 → 人工选定一版。</p><button class="btn" type="button" data-view="scripts">去生成脚本 →</button></li>
-        <li><span class="workflow-number">2</span><h3>制作粗剪工程</h3><p>选定脚本 → 配音、字幕和素材匹配 → 检查镜头、保存修改。</p><button class="btn" type="button" data-view="topics">选题与任务信息</button></li>
+        <li><span class="workflow-number">2</span><h3>制作粗剪成片</h3><p>确认脚本后开始制作：收集素材、配音，并合成可播放的竖屏粗剪。替换镜头后可重新出片，再写入剪映。</p><button class="btn" type="button" data-view="create">去制作工作台 →</button></li>
         <li><span class="workflow-number">3</span><h3>在剪映精修</h3><p>打开本机工程 → 人工精修 → 在剪映导出 MP4。</p><button class="btn" type="button" id="connectionDraftGuide">查看剪映打开方法 →</button></li>
         <li><span class="workflow-number">4</span><h3>上传成片评测</h3><p>手动选择 MP4 → 本机转写、抽帧 → 模型评测。需修改时回剪映。</p><button class="btn" type="button" data-view="evaluate">去上传评测 →</button></li>
       </ol>
@@ -566,8 +572,9 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('infoTooltip').h
 window.addEventListener('resize',hideInfo);
 document.addEventListener('scroll',()=>{if(infoAnchor&&document.activeElement===infoAnchor)showInfo(infoAnchor);else hideInfo()},true);
 const fmt=t=>{const m=Math.floor(t/60),s=t-m*60;return String(m).padStart(2,'0')+':'+s.toFixed(1).padStart(4,'0')};
-const thumb=id=>`thumbs/${id}.jpg`;
-const state={gen:false,t:0,playing:false,seg:0,shot:0};
+const thumb=id=>R.clips[id]?.thumb||`thumbs/${id}.jpg`;
+const state={gen:false,t:0,playing:false,seg:0,shot:0,masterUrl:R.preview_mp4?.url||'',masterFresh:!!(R.preview_mp4&&R.preview_mp4.url),stockQuery:''};
+function usingMaster(){return !!(state.gen&&state.masterFresh&&state.masterUrl)}
 S.forEach(seg=>seg.shots.forEach(sh=>{sh.orig=sh.clip;sh.orig_src_in=sh.src_in}));
 const voiceName=R.skill.voice.used||R.skill.voice.voice;
 const isInput=R.topic.chosen==='INPUT';
@@ -592,7 +599,7 @@ const swaps=()=>{const o={};S.forEach(seg=>seg.shots.forEach((sh,j)=>{if(sh.clip
 
 /* ---------- render ---------- */
 function renderSteps(done,run,log=R.log){
-  const stages=[['脚本','写脚本'],['配音','生成配音'],['素材','本地素材库召回'],['草稿','编排剪映轨道'],['检查','草稿检查']];
+  const stages=[['脚本','写脚本'],['配音','生成配音'],['补缺','在线素材补缺'],['素材','本地素材库召回'],['草稿','编排剪映轨道'],['成片','合成粗剪'],['检查','草稿检查']].filter(([,key])=>log.some(l=>l.step===key)||!['在线素材补缺','合成粗剪'].includes(key));
   $('stageStrip').innerHTML=stages.map(([label,key])=>{const i=log.findIndex(l=>l.step===key);const status=i>=0&&i<done?'done':i>=0&&i===run?'run':'';return `<li class="${status}"><span class="stage-dot" aria-hidden="true"></span>${label}<span class="sr-only" hidden>${status}</span></li>`}).join('');
   $('steps').innerHTML=log.map((l,i)=>`<li data-step="${esc(l.step)}" class="${i<done?'done':i===run?'run':''} ${['选题','写脚本','读取 Skill'].includes(l.step)?'link':''}"><span class="dot" aria-hidden="true"></span><span><span class="k">${esc(l.step)}</span><span class="v">${i<done?esc(l.step==='自动评分'&&!Array.isArray(R.score?.checks)?'旧版估算已停用，请重新生成后查看检查结果':l.msg):i===run?'处理中…':'等待'}</span></span><span class="ms mono">${i<done&&l.ms!=null?l.ms+' ms':''}</span></li>`).join('');
 }
@@ -633,12 +640,13 @@ function renderInspect(){
    <div class="matching-info">${infoButton('当前分句的素材要求','画面标签：'+seg.need.join('、')+'；地点：'+(seg.places.join('、')||'不限'))}</div>
    ${seg.gap?`<div class="gap">${esc(seg.gap)}</div>`:''}
    ${seg.shots.length>1?`<div class="shot-tabs">${seg.shots.map((x,i)=>`<button data-shot="${i}" class="${i===state.shot?'on':''}">镜头 ${i+1}</button>`).join('')}</div>`:''}
-   <div class="cands">${seg.candidates.map(c=>{const sel=c.id===sh.clip;const flags=(c.excluded?`<span class="chip bad">${esc(c.excluded)}</span>`:'')+(c.issues.includes('brand')?'<span class="chip warn">品牌露出</span>':'')+(c.issues.includes('people')?'<span class="chip">有路人（不可辨认）</span>':'');
-     return `<div class="cand ${sel?'sel':''} ${c.excluded?'x':''}"><img src="${thumb(c.id)}" alt=""><div><div class="nm">${esc(c.title)}</div><div class="meta">${c.clip_s} 秒 ${infoButton('素材匹配依据','匹配标签：'+(c.matched.join('、')||'无')+'；清晰度：'+c.quality+'/5；匹配度：'+Math.round(c.coverage*100)+'%（基于标签匹配）')}</div>${flags?`<div class="chips">${flags}</div>`:''}</div><div class="pct"><span class="mono">${Math.round(c.coverage*100)}%</span><br>${sel?'<span class="meta">使用中</span>':`<button data-use="${c.id}">${c.excluded?'仍要替换':'替换'}</button>`}</div></div>`}).join('')}</div>`;
+   <div class="cands">${seg.candidates.map(c=>{const sel=c.id===sh.clip;const clip=R.clips[c.id]||{};const flags=(c.excluded?`<span class="chip bad">${esc(c.excluded)}</span>`:'')+(c.issues.includes('brand')?'<span class="chip warn">品牌露出</span>':'')+(c.issues.includes('people')?'<span class="chip">有路人（不可辨认）</span>':'')+(clip.stock?'<span class="chip warn">Pixabay · 发布前核查人物和商标</span>':'');
+     return `<div class="cand ${sel?'sel':''} ${c.excluded?'x':''}"><img src="${thumb(c.id)}" alt=""><div><div class="nm">${esc(c.title)}</div><div class="meta">${c.clip_s} 秒 ${clip.author?' · '+esc(clip.author):''} ${infoButton('素材匹配依据','匹配标签：'+(c.matched.join('、')||'无')+'；清晰度：'+c.quality+'/5；匹配度：'+Math.round(c.coverage*100)+'%（基于标签匹配）'+(clip.stock?'。来源：Pixabay，发布前需人工核查人物和商标。':''))}</div>${flags?`<div class="chips">${flags}</div>`:''}</div><div class="pct"><span class="mono">${Math.round(c.coverage*100)}%</span><br>${sel?'<span class="meta">使用中</span>':`<button data-use="${c.id}">${c.excluded?'仍要替换':'替换'}</button>`}</div></div>`}).join('')}</div>`;
   renderEdits();
 }
 function renderEdits(){
-  $('exportRoughcutBtn').disabled=!STUDIO||HOSTED||!state.gen||!!state.running||!!state.exporting;
+  const busy=!STUDIO||HOSTED||!state.gen||!!state.running||!!state.exporting;
+  $('exportRoughcutBtn').disabled=busy;$('rerenderBtn').disabled=busy;
   const sw=swaps(), n=Object.values(sw).reduce((a,o)=>a+Object.keys(o).length,0);
   $('saveDraftBtn').disabled=!STUDIO||!state.gen||!n||!!R.preview_only||state.running;
   $('saveDraftBtn').textContent=n?'写入剪映 · '+n+' 处修改':'写入剪映工程';
@@ -653,13 +661,26 @@ function segAt(t){for(const s of S){if(t<s.start+s.dur)return s}return S[S.lengt
 function shotAt(seg,t){for(let j=0;j<seg.shots.length;j++){const sh=seg.shots[j];if(t<sh.start+sh.dur)return j}return seg.shots.length-1}
 function renderMonitor(){
   const seg=segAt(state.t), j=shotAt(seg,state.t), sh=seg.shots[j];
-  Object.entries(vids).forEach(([id,v])=>{const on=id===sh.clip;v.classList.toggle('on',on);
-    if(on){const want=sh.src_in+(state.t-sh.start);if(Math.abs(v.currentTime-want)>.3)v.currentTime=want;if(state.playing&&v.paused)v.play().catch(()=>{});if(!state.playing&&!v.paused)v.pause()}else if(!v.paused)v.pause()});
-  S.forEach((s,i)=>{const a=auds[i];const inside=state.t>=s.start&&state.t<s.start+s.voice_s;
-    if(inside&&state.playing){const want=state.t-s.start;if(Math.abs(a.currentTime-want)>.25)a.currentTime=want;if(a.paused)a.play().catch(()=>{})}else if(!a.paused)a.pause()});
-  $('sub').textContent=seg.subtitle.replace('\n',' ');
-  const st=S.flatMap(s=>s.stickers).find(k=>state.t>=k.start&&state.t<k.start+k.dur);
-  $('huazi').hidden=!st; if(st)$('huazi').textContent=st.text;
+  const master=$('master');
+  if(usingMaster()){
+    Object.values(vids).forEach(v=>{v.classList.remove('on');if(!v.paused)v.pause()});
+    auds.forEach(a=>{if(!a.paused)a.pause()});
+    if(master.dataset.src!==state.masterUrl){master.dataset.src=state.masterUrl;master.src=state.masterUrl}
+    master.hidden=false;
+    if(Number.isFinite(master.currentTime)&&Math.abs(master.currentTime-state.t)>.35){try{master.currentTime=state.t}catch(_){}}
+    if(state.playing&&master.paused)master.play().catch(()=>{});
+    if(!state.playing&&!master.paused)master.pause();
+    $('sub').hidden=true;$('huazi').hidden=true;
+  }else{
+    if(!master.hidden){master.hidden=true;if(!master.paused)master.pause()}
+    Object.entries(vids).forEach(([id,v])=>{const on=id===sh.clip;v.classList.toggle('on',on);
+      if(on){const want=sh.src_in+(state.t-sh.start);if(Math.abs(v.currentTime-want)>.3)v.currentTime=want;if(state.playing&&v.paused)v.play().catch(()=>{});if(!state.playing&&!v.paused)v.pause()}else if(!v.paused)v.pause()});
+    S.forEach((s,i)=>{const a=auds[i];if(!a)return;const inside=state.t>=s.start&&state.t<s.start+s.voice_s;
+      if(inside&&state.playing){const want=state.t-s.start;if(Math.abs(a.currentTime-want)>.25)a.currentTime=want;if(a.paused)a.play().catch(()=>{})}else if(!a.paused)a.pause()});
+    $('sub').hidden=false;$('sub').textContent=seg.subtitle.replace('\n',' ');
+    const st=S.flatMap(s=>s.stickers).find(k=>state.t>=k.start&&state.t<k.start+k.dur);
+    $('huazi').hidden=!st; if(st)$('huazi').textContent=st.text;
+  }
   $('tc').textContent=fmt(state.t)+' / '+fmt(R.total_s);$('scrub').value=state.t;
   if(state.playing&&(seg.i!==state.seg||j!==state.shot)){state.seg=seg.i;state.shot=j;renderInspect();if($('materialFilter').value==='candidates')renderInlineLibrary()}
   $('timelinePlayhead').style.left=(state.t/R.total_s*100)+'%';
@@ -670,13 +691,33 @@ function showDone(t=1){renderSteps(R.log.length,-1);state.gen=true;state.t=t;con
 
 /* ---------- playback ---------- */
 let raf=0,last=0;
-function tick(ts){if(!state.playing)return;if(last)state.t+=(ts-last)/1000;last=ts;
+function tick(ts){if(!state.playing)return;
+  if(usingMaster()){const master=$('master');state.t=Math.min(master.currentTime||0,Math.max(0,R.total_s-.01));
+    if(master.ended||state.t>=R.total_s-.05){state.t=Math.max(0,R.total_s-.01);setPlaying(false);return}
+    renderMonitor();raf=requestAnimationFrame(tick);return}
+  if(last)state.t+=(ts-last)/1000;last=ts;
   if(state.t>=R.total_s){state.t=R.total_s-.01;setPlaying(false);return}
   renderMonitor();raf=requestAnimationFrame(tick)}
 function setPlaying(p){state.playing=p;last=0;$('play').setAttribute('aria-label',p?'暂停':'播放');
   $('playIc').innerHTML=p?'<path d="M3 2h4v12H3zM9 2h4v12H9z"/>':'<path d="M4 2l10 6-10 6z"/>';
   if(p){if(state.t>=R.total_s-.05)state.t=0;raf=requestAnimationFrame(tick)}else cancelAnimationFrame(raf);renderMonitor()}
 function jumpTo(segI,shotI){state.seg=segI;state.shot=shotI;const sh=S[segI].shots[shotI];state.t=sh.start+.05;renderInspect();renderTimeline();renderInlineLibrary();renderMonitor()}
+function applyClip(id){
+  const clip=R.clips[id],sh=S[state.seg].shots[state.shot];if(!clip||!sh)return;
+  sh.clip=id;vid(id);sh.src_in=Math.min(R.skill.clip_skip_head_s,Math.max(0,(clip.clip_s||0)-sh.dur));
+  state.t=sh.start+.05;state.masterFresh=false;renderAll();
+}
+async function useStockHit(id){
+  if(!Number.isInteger(id)||state.running||state.exporting)return;
+  const seg=S[state.seg];$('stockStatus').textContent='正在下载素材并加入本机素材库…';
+  try{
+    const response=await fetch('/api/stock/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_id:id,tags:seg.need||[],places:seg.places||[]})});
+    const data=await response.json();if(!response.ok)throw new Error(data.error||'下载失败');
+    const clip=data.clip;R.clips[clip.id]=clip;
+    if(!seg.candidates.some(c=>c.id===clip.id))seg.candidates.unshift({id:clip.id,title:clip.title,coverage:0,matched:seg.need||[],quality:clip.quality||3,issues:clip.issues||[],excluded:null,clip_s:clip.clip_s});
+    applyClip(clip.id);$('stockStatus').textContent=(data.notice||'已加入素材库')+' 当前镜头已替换，可重新渲染成片。';
+  }catch(error){$('stockStatus').textContent=error.message}
+}
 
 /* ---------- interactions ---------- */
 document.addEventListener('click',async e=>{
@@ -687,8 +728,10 @@ document.addEventListener('click',async e=>{
   const tab=e.target.closest('[data-shot]');
   if(tab&&tab.closest('#inspect')){jumpTo(state.seg,+tab.dataset.shot);return}
   const use=e.target.closest('[data-use]');
-  if(use){const sh=S[state.seg].shots[state.shot];sh.clip=use.dataset.use;vid(sh.clip);sh.src_in=Math.min(R.skill.clip_skip_head_s,Math.max(0,R.clips[sh.clip].clip_s-sh.dur));state.t=sh.start+.05;renderAll();return}
-  if(e.target.id==='undoSw'){S.forEach(seg=>seg.shots.forEach(sh=>{sh.clip=sh.orig;sh.src_in=sh.orig_src_in}));renderAll();return}
+  if(use){applyClip(use.dataset.use);return}
+  const stockHit=e.target.closest('[data-stock-id]');
+  if(stockHit){useStockHit(Number(stockHit.dataset.stockId));return}
+  if(e.target.id==='undoSw'){S.forEach(seg=>seg.shots.forEach(sh=>{sh.clip=sh.orig;sh.src_in=sh.orig_src_in}));state.masterUrl=R.preview_mp4?.url||'';state.masterFresh=!!state.masterUrl;renderAll();return}
   if(e.target.id==='writeDraft'){
     const b=e.target;b.disabled=true;b.textContent='写入中…';
     try{const r=await fetch('/api/redraft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({swaps:swaps()})});const j=await r.json();
@@ -903,7 +946,7 @@ function renderScriptWorkspace(){
     <div class="script-checks">${(v.checks||[]).filter(c=>!c.ok||c.msg?.includes('人工')).map(c=>`<p>${esc(c.msg)}</p>`).join('')}</div>
     </article>`).join('');
   $('produceGo').disabled=!STUDIO||!scriptSession||!selectedVariant||state.running;
-  $('productionStatus').textContent=scriptSession?(selectedVariant?'已选用 '+selectedVariant+' 版':'选用一版，继续制作'):'生成脚本后可选择版本';
+  $('productionStatus').textContent=scriptSession?(selectedVariant?'已选用 '+selectedVariant+' 版。确认后点击「开始制作」，将收集素材、配音并合成可播放粗剪。':'选用一版，再开始制作'):'生成脚本后可选择版本';
   opsScriptGate();
 }
 async function scriptRequest(path,body){
@@ -1126,7 +1169,8 @@ if(STUDIO){
   if(!HOSTED) fetch('/api/keys').then(r=>r.json()).then(k=>{
     connectionConfig=k;renderConnections();
     if(!k.deepseek)$('askHint').textContent='脚本服务尚未配置，当前可查看已有结果。';
-    $('produceGo').title=k.minimax?'使用已选脚本生成配音、字幕和剪映工程':'使用系统语音生成配音，并生成字幕和剪映工程';
+    $('produceGo').title=k.minimax?'收集素材、生成配音和剪映工程，并合成可播放粗剪':'用系统语音配音，收集素材、生成剪映工程，并合成可播放粗剪';
+    renderStockForm();
     if(!k.deepseek)$('askGo').disabled=true;
     if(k.models){const labels={script:'脚本',video:'评测',tts:'配音'};$('kv').insertAdjacentHTML('beforeend',`<dt>本机配置</dt><dd>${Object.entries(k.models).map(([key,v])=>esc(labels[key]||key)+' · '+esc(v.provider)+' / '+esc(v.model)).join('<br>')}<br><small>配置状态不代表本次已调用。</small></dd>`)}
   }).catch(()=>{connectionConfig={unavailable:true};renderConnections();$('askGo').disabled=true;$('askHint').textContent='暂时无法连接本地服务，请刷新后重试。'});
@@ -1150,7 +1194,7 @@ if(STUDIO){
   });
   $('produceGo').addEventListener('click',async()=>{
     if(state.running||libraryBusy||!scriptSession||!selectedVariant||!opsScriptConfirmed())return;
-    generationBusy(true);setPlaying(false);$('produceGo').textContent='正在制作…';$('productionStatus').textContent='正在生成配音…';
+    generationBusy(true);setPlaying(false);setView('create');$('produceGo').textContent='正在制作…';$('productionStatus').textContent='正在收集素材并制作粗剪…';$('opsStatus').textContent='正在收集素材、配音并合成竖屏粗剪…';
     try{
       const r=await fetch('/api/produce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:scriptSession.id,variant:selectedVariant})});
       const data=await r.json();if(!r.ok)throw new Error(data.error||'粗剪生成失败');
@@ -1159,10 +1203,10 @@ if(STUDIO){
         const statusResponse=await fetch('/api/status');if(!statusResponse.ok)throw new Error('无法读取生成进度');
         const job=await statusResponse.json();
         renderSteps(job.log.length,job.running?job.log.length:-1,job.log);
-        $('productionStatus').textContent=job.log.at(-1)?.step||'正在生成配音…';
+        const last=job.log.at(-1);$('opsStatus').textContent=last?last.step+' · '+last.msg:'正在收集素材…';$('productionStatus').textContent=$('opsStatus').textContent;
         if(!job.running){if(job.error)throw new Error(job.error);location.replace('/#produced');location.reload();return}
       }
-    }catch(err){$('productionStatus').textContent='制作失败：'+err.message;generationBusy(false);$('produceGo').textContent='生成配音与粗剪 →'}
+    }catch(err){$('productionStatus').textContent='制作失败：'+err.message;$('opsStatus').textContent='制作失败：'+err.message;generationBusy(false);$('produceGo').textContent='开始制作 →'}
   });
 }
 
@@ -1172,7 +1216,7 @@ function renderConnections(){
   const rows=[
     ['脚本模型','工作台服务通过 API 调用模型；在本机 .env 配置 DEEPSEEK_API_KEY，或 SCRIPT_API_KEY / SCRIPT_BASE_URL / SCRIPT_MODEL。',configured(k?.deepseek)],
     ['配音','优先使用已配置的 MiniMax；未配置时由 macOS 系统语音配音。MiniMax 通过 MINIMAX_API_KEY 接入。',!STUDIO?'本地生成时选择服务':!k?'正在读取配置':k.unavailable?'配置状态未知':k.minimax?'MiniMax 密钥已配置':'使用 macOS 系统语音'],
-    ['素材匹配','从仓库随附的本地素材和标签匹配，不是在线搜索，也没有接云端素材库。',Object.keys(R.clips).length+' 段素材 · 本地标签匹配'],
+    ['素材匹配','先按本地标签匹配。匹配不足时，若配置了 Pixabay 密钥，会检索并下载竖屏或高清视频；未配置时只用本地素材。',Object.keys(R.clips).length+' 段素材'+(k?.pixabay?' · Pixabay 已配置':k?' · 未配置 Pixabay，只用本地素材':' · 正在读取配置')],
     ['剪映工程','工作台写入工程文件夹，剪映读取工程。没有直接控制剪映，也不会自动启动剪映。',STUDIO&&!R.preview_only?'本机工程已生成 · 客户端打开待验证':'只有演示记录，需先生成本机工程'],
     ['成片评测','上传 MP4 后，本机语音转写和抽帧；画面及转写文本发送给评测模型。使用 VIDEO_API_KEY，未单独设置时可复用 DeepSeek 密钥。',configured(k?.video)],
     ['发布与复盘','人工发布；当前复盘读取演示发布记录与 CSV。本地 review.py 处理后由页面展示。', '未接入平台自动发布或真实数据 API']
@@ -1221,7 +1265,7 @@ function opsScriptGate(){
   $('scriptVersions').hidden=!!t&&!matches;
   if(t&&!matches){$('scriptsHeading').textContent='当前任务脚本';$('scriptSource').textContent='尚未生成'}
   document.querySelector('.script-approval').hidden=!!t&&!matches;
-  if(selectedVariant&&!confirmed)$('productionStatus').textContent='确认当前脚本后，继续制作';
+  if(selectedVariant&&!confirmed)$('productionStatus').textContent='请先确认当前脚本，再开始制作。';
 }
 $('scriptConfirm').addEventListener('change',()=>{const t=opsTask();if(!t||!selectedVariant)return;t.sessionId=scriptSession.id;t.variant=selectedVariant;const key=opsKey(t);t.records[key]={...opsRecord(t),confirmed:$('scriptConfirm').checked,confirmedAt:new Date().toISOString()};if(!$('scriptConfirm').checked){t.records[key].decision=null;opsArchivePublication(t.records[key])}opsSave();opsScriptGate();opsRender(document.body.dataset.view)});
 async function opsActivate(id,view){
@@ -1312,19 +1356,25 @@ $('durationLabel').textContent=R.total_s.toFixed(1)+'s';$('scrub').max=Math.max(
 $('scrub').addEventListener('input',()=>{if(!state.gen)return;state.t=Number($('scrub').value);const seg=segAt(state.t);state.seg=seg.i;state.shot=shotAt(seg,state.t);renderAll()});
 $('inspect').addEventListener('keydown',e=>{if(!e.target.matches('[data-seg]')||!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const n=S.length,i=+e.target.dataset.seg,next=e.key==='Home'?0:e.key==='End'?n-1:(i+(e.key==='ArrowRight'?1:-1)+n)%n;jumpTo(next,0);$('inspect').querySelector(`[data-seg="${next}"]`).focus()});
 $('saveDraftBtn').addEventListener('click',()=>{if($('writeDraft'))$('writeDraft').click()});
-$('exportRoughcutBtn').addEventListener('click',async()=>{
-  if(state.exporting||state.running)return;
-  state.exporting=true;renderEdits();
-  const button=$('exportRoughcutBtn'),status=$('exportRoughcutStatus');
-  button.textContent='正在导出…';status.textContent='正在合成当前预览的镜头、配音与字幕，请保持页面打开。';
+async function renderRoughcut(download){
+  if(!STUDIO||HOSTED||state.exporting||state.running)return;
+  state.exporting=true;renderEdits();setPlaying(false);
+  const status=$('exportRoughcutStatus');
+  $('rerenderBtn').textContent='正在合成…';$('exportRoughcutBtn').textContent='正在合成…';
+  status.textContent='正在按当前镜头、配音和字幕合成 9:16 粗剪，请保持页面打开。';
   try{
     const response=await fetch('/api/export-roughcut',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:R.run_id,swaps:swaps()})});
     const data=await response.json();if(!response.ok)throw new Error(data.error||'导出失败');
-    status.replaceChildren(document.createTextNode('粗剪已导出 · '));
-    const link=document.createElement('a');link.href=data.url;link.download=data.filename;link.textContent='下载 MP4';status.appendChild(link);link.click();
-  }catch(error){status.textContent='导出失败：'+error.message}
-  finally{state.exporting=false;button.textContent='导出粗剪 MP4';renderEdits()}
-});
+    state.masterUrl=data.url;state.masterFresh=true;state.t=0;
+    const pending=Object.values(swaps()).reduce((n,items)=>n+Object.keys(items).length,0);
+    status.replaceChildren(document.createTextNode(pending?'成片已按当前镜头重新合成。这些替换尚未写入剪映，点击「写入剪映工程」会保存同一批镜头。':'成片已更新，与当前时间轴一致。'));
+    const link=document.createElement('a');link.href=data.url+(download?'?download':'');link.textContent='下载 MP4';if(download)link.download=data.filename;status.append(' ');status.appendChild(link);
+    renderAll();setPlaying(true);if(download)link.click();
+  }catch(error){status.textContent='成片合成失败：'+error.message}
+  finally{state.exporting=false;$('rerenderBtn').textContent='重新渲染成片';$('exportRoughcutBtn').textContent='导出粗剪 MP4';renderEdits()}
+}
+$('rerenderBtn').addEventListener('click',()=>renderRoughcut(false));
+$('exportRoughcutBtn').addEventListener('click',()=>renderRoughcut(true));
 
 $('scriptBtn').addEventListener('click',openScript);$('skillBtn').addEventListener('click',openSkill);
 function renderInlineLibrary(){
@@ -1336,7 +1386,9 @@ function renderInlineLibrary(){
 }
 function previewMaterial(id){
   const c=R.clips[id];if(!c)return;if(state.playing)setPlaying(false);
-  $('modalCard').innerHTML=`<div class="work-detail-head"><span class="eyebrow">素材原片 / ${esc(id)}</span><button class="btn small" id="closeM">关闭</button></div><h3>${esc(c.title)}</h3><video class="material-player" src="${esc(c.file)}" poster="${thumb(id)}" controls playsinline preload="metadata"></video><p>${Number(c.clip_s).toFixed(1)} 秒 · ${(c.tags||[]).map(esc).join(' / ')}</p><p><a href="${esc(c.pexels)}" target="_blank" rel="noopener">查看 Pexels 来源 ↗</a></p>`;
+  const source=c.stock?'Pixabay':(c.provider||'Pexels');
+  $('modalCard').innerHTML=`<div class="work-detail-head"><span class="eyebrow">素材原片 / ${esc(id)}</span><button class="btn small" id="closeM">关闭</button></div><h3>${esc(c.title)}</h3><video class="material-player" src="${esc(c.file)}" poster="${thumb(id)}" controls playsinline preload="metadata"></video><p>${Number(c.clip_s).toFixed(1)} 秒 · ${(c.tags||[]).map(esc).join(' / ')}</p><p>${esc(source)}${c.author?' · '+esc(c.author):''} · <a href="${esc(c.page||c.pexels)}" target="_blank" rel="noopener">查看来源与授权 ↗</a></p>${c.stock?'<p>发布前请人工核查画面中的人物和商标。</p>':''}${state.gen?`<p><button class="btn primary" type="button" id="assignClip">替换当前镜头</button></p>`:''}`;
+  if($('assignClip'))$('assignClip').onclick=()=>{applyClip(id);$('modal').hidden=true};
   $('modal').hidden=false;
 }
 function seekTimeline(time){
@@ -1377,7 +1429,21 @@ setView(HOSTED?'evaluate':routeView(),false);
 $('editorTitle').textContent=R.title;$('editorMeta').textContent=R.country+' / '+R.platform+' · '+R.total_s.toFixed(1)+' 秒';
 const hm=location.hash.match(/^#done(?:-([\d.]+))?/);
 if(!HOSTED&&hm){setView('create',false);showDone(parseFloat(hm[1]||'1'));}
-if(!HOSTED&&location.hash==='#produced'){setView('create',false);$('productionStatus').textContent='粗剪已生成 · '+R.title;}
+if(!HOSTED&&location.hash==='#produced'){setView('create',false);$('productionStatus').textContent='粗剪已生成 · '+R.title;if(usingMaster()){state.t=0;setPlaying(true)}}
+if(R.stock?.message||R.preview_error){$('exportRoughcutStatus').textContent=[R.stock?.message,R.preview_error].filter(Boolean).join(' ')}
+function renderStockForm(){if(!STUDIO||HOSTED)return;$('stockForm').hidden=false;if(connectionConfig&&connectionConfig.pixabay===false)$('stockStatus').textContent='未配置 Pixabay 密钥，在线搜索不可用，当前只使用本地素材。';else if(connectionConfig?.pixabay)$('stockStatus').textContent='可搜索 Pixabay。选用后下载到本机素材库。发布前请人工核查人物和商标。'}
+$('stockForm').addEventListener('submit',async e=>{
+  e.preventDefault();if(!STUDIO||HOSTED||state.running||state.exporting)return;
+  const query=$('stockQuery').value.trim();$('stockStatus').textContent='正在搜索在线素材…';$('stockHits').innerHTML='';
+  try{const response=await fetch('/api/stock/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
+    const data=await response.json();if(!response.ok)throw new Error(data.error||'搜索失败');
+    state.stockQuery=data.query||query;
+    $('stockHits').innerHTML=(data.hits||[]).map(hit=>{const poster=/^https:\/\/cdn\.pixabay\.com\//.test(hit.thumbnail||'')?hit.thumbnail:'';return `<div class="cand"><img src="${esc(poster)}" alt=""><div><div class="nm">${esc(hit.title)}</div><div class="meta">Pixabay · ${esc(hit.author||'未知作者')} · ${Number(hit.duration)||0} 秒${hit.portrait?' · 竖屏':''}${hit.hd?' · 高清':''}</div><div class="meta"><a href="${esc(hit.page)}" target="_blank" rel="noopener">来源与授权 ↗</a></div></div><button type="button" data-stock-id="${Number(hit.id)}">用于此镜头</button></div>`}).join('')||'<p class="empty">没有找到可下载的视频。</p>';
+    $('stockHits').insertAdjacentHTML('beforeend',`<p class="gap">${esc(data.notice||'发布前请人工核查人物和商标。')}</p>`);
+    $('stockStatus').textContent='搜索词：'+(data.query||query);
+  }catch(error){$('stockStatus').textContent=error.message}
+});
+$('master').addEventListener('error',()=>{if(state.masterFresh&&$('master').dataset.src){state.masterFresh=false;$('exportRoughcutStatus').textContent='成片暂时无法播放，已改回逐镜预览。';renderMonitor()}});
 if(!HOSTED&&['#script','#skill'].includes(location.hash))({'#script':openScript,'#skill':openSkill})[location.hash]();
 renderTopicPool();
 renderVideoFeed();

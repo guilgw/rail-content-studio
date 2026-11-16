@@ -19,6 +19,7 @@ import time
 import pyJianYingDraft as jy
 
 import llm
+import stock_media
 from draft_review import review_draft
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -54,7 +55,11 @@ def log(step, msg, t0):
 
 def load(name):
     with open(os.path.join(DATA, name), encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if name == "library.json":
+        known = {clip["id"] for clip in data["clips"]}
+        data["clips"].extend(clip for clip in stock_media.extra_clips(OUT) if clip.get("id") not in known)
+    return data
 
 
 def words(text):
@@ -305,9 +310,16 @@ def draft_name_for(topic):
 
 
 def clip_meta(clips, durations):
-    return {c["id"]: {"title": c["title"], "file": c["file"], "tags": c["tags"], "location": c["location"],
-                      "quality": c["quality"], "issues": c["issues"], "pexels": c["pexels"],
-                      "clip_s": round(durations[c["id"]], 2)} for c in clips}
+    meta = {}
+    for c in clips:
+        item = {"title": c["title"], "file": c["file"], "tags": c["tags"], "location": c["location"],
+                "quality": c["quality"], "issues": c["issues"], "pexels": c.get("pexels") or c.get("page") or "",
+                "places": c.get("places") or [], "clip_s": round(durations[c["id"]], 2)}
+        if c.get("stock"):
+            item.update(provider="Pixabay", author=c.get("author") or "", license=c.get("license") or stock_media.LICENSE,
+                        thumb=c.get("thumb") or "", stock=True, page=c.get("page") or item["pexels"])
+        meta[c["id"]] = item
+    return meta
 
 
 def save_result(result):
@@ -445,7 +457,12 @@ def main():
         log("写脚本", f"{who} 出 {len(variants)} 版初稿，审核拦下 {len(rejected)} 版，采用 {chosen['id']} 版" + ("" if passed else "（所有版本均有问题，需人工修改）"), t0)
     log("读取 Skill", f"{skill['name']}：{len(skill.get('rules', []))} 条规则，单镜头 ≤ {skill['max_shot_s']} 秒、字幕/花字样式、利益点和结尾钩子", t0)
 
-    durations = {c["id"]: jy.VideoMaterial(os.path.join(ROOT, c["file"])).duration / US for c in clips}
+    durations = {}
+    for c in clips:
+        if c.get("duration"):
+            durations[c["id"]] = float(c["duration"])
+        else:
+            durations[c["id"]] = jy.VideoMaterial(os.path.join(ROOT, c["file"])).duration / US
     log("读取素材库", f"{len(clips)} 段实拍，已打标签（地点、场景、清晰度、风险）", t0)
 
     # 配音
@@ -487,6 +504,9 @@ def main():
         t += ln["seg_s"]
     total_s = round(t, 2)
     log("按语义和气口分段", f"{len(lines)} 段，总时长 {total_s} 秒", t0)
+
+    clips, durations, stock_report = stock_media.fill_gaps(lines, clips, durations, retrieve, ROOT, OUT, skill["max_shot_s"])
+    log("在线素材补缺", stock_report["message"], t0)
 
     # 素材召回 + 地点规则
     plan = []
@@ -564,7 +584,8 @@ def main():
               "skill": {**skill, "voice": {**voice, "used": voice_name, "engine": engine}}, "total_s": total_s, "segments": plan,
               "rules": rule_out, "score": review,
               "log": log_lines, "draft": {"name": draft_name, "path": draft_dir, "shots": n_shots, "stickers": n_st},
-              "usage": usage_info, "models": models or None, "clips": clip_meta(clips, durations)}
+              "usage": usage_info, "models": models or None, "clips": clip_meta(clips, durations),
+              "stock": stock_report}
     save_result(result)
     print("done:", os.path.join(OUT, "result.json"))
 
