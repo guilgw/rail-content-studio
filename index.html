@@ -97,6 +97,11 @@
 .produce-dialog .err{margin:12px 0 0}
 .stock-form{display:flex;gap:8px;margin:8px 0}#stockQuery{flex:1}.stock-form .btn{flex-shrink:0}
 #stockHits{max-height:240px;overflow:auto;margin-bottom:8px}#stockHits .cand{grid-template-columns:72px minmax(0,1fr) auto}
+.current-cut{display:grid;grid-template-columns:180px minmax(0,1fr);gap:20px;align-items:center;margin:0 0 22px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+.current-cut video{width:180px;max-height:320px;background:#000;border-radius:8px;object-fit:cover}
+.current-cut h2{margin:0 0 6px;font-size:18px}
+.current-cut .produce-phases{margin:12px 0 0}
+@media(max-width:740px){.current-cut{grid-template-columns:1fr}.current-cut video{width:min(180px,100%)}}
 
 </style>
 </head>
@@ -129,7 +134,7 @@
       <button type="button" class="btn" id="saveDraftBtn" disabled>写入剪映工程</button>
       <button type="button" class="btn" id="rerenderBtn" disabled>重新渲染成片</button>
       <button type="button" class="btn" id="exportRoughcutBtn" disabled>导出粗剪 MP4</button>
-      <button type="button" class="btn" data-view="evaluate">评测成片 →</button>
+      <button type="button" class="btn" id="reviewCurrentBtn">评测成片 →</button>
     </div>
   </div>
   <div class="ops-status" id="opsStatus" role="status"></div>
@@ -230,7 +235,11 @@
     <section id="evaluateView" class="workspace" hidden aria-label="成片评测">
       <div id="videoReviewPanel">
         <div class="video-review">
-          <div class="upload-area"><div class="upload-intro"><h2>上传成片</h2><p class="empty">MP4 / MOV / M4V · 最大 100 MB · 最长 3 分钟</p></div>
+          <section id="currentCutCard" class="current-cut" hidden>
+            <video id="currentCutVideo" controls playsinline preload="metadata"></video>
+            <div><h2 id="currentCutTitle"></h2><p class="mono" id="currentCutMeta"></p><ol id="reviewProgress" class="produce-phases"></ol></div>
+          </section>
+          <div class="upload-area"><div class="upload-intro"><h2>上传成片</h2><p class="empty">也可以手动选择 MP4 / MOV / M4V · 最大 100 MB · 最长 3 分钟</p></div>
           <div class="upload-control"><label for="reviewFile">选择导出的成片</label><input id="reviewFile" type="file" accept=".mp4,.mov,.m4v,video/mp4,video/quicktime"><button class="btn primary" id="reviewGo" type="button">开始评测</button><span class="review-cost">将发送画面与转写文本进行评测，产生 API 费用。</span><div id="reviewStatus" class="empty" role="status" aria-live="polite"></div></div></div>
           <div class="review-meta"><details><summary>评测方式与数据处理</summary><p id="reviewPrivacy">声音在本机转写，抽取的画面和转写文字发送给所配置的评测模型，不发送原始音频。调用会产生费用。</p><p id="reviewModel">首次使用可能需要下载本地语音识别模型。默认针对英语配音，结果需要人工核验。</p></details></div>
           <label class="review-binding"><input type="checkbox" id="bindTaskReview">此成片属于当前任务的已确认脚本</label><div id="videoReviewResult"></div>
@@ -247,13 +256,14 @@
         <li><span class="workflow-number">1</span><h3>生成并选用脚本</h3><p>输入选题 → 模型生成三版 → 人工选定一版。</p><button class="btn" type="button" data-view="scripts">去生成脚本 →</button></li>
         <li><span class="workflow-number">2</span><h3>制作粗剪成片</h3><p>在脚本工作室点击「选用此版」即开始制作。进度弹层显示真实步骤，完成后自动进入制作工作台播放。</p><button class="btn" type="button" data-view="create">去制作工作台 →</button></li>
         <li><span class="workflow-number">3</span><h3>在剪映精修</h3><p>打开本机工程 → 人工精修 → 在剪映导出 MP4。</p><button class="btn" type="button" id="connectionDraftGuide">查看剪映打开方法 →</button></li>
-        <li><span class="workflow-number">4</span><h3>上传成片评测</h3><p>手动选择 MP4 → 本机转写、抽帧 → 模型评测。需修改时回剪映。</p><button class="btn" type="button" data-view="evaluate">去上传评测 →</button></li>
+        <li><span class="workflow-number">4</span><h3>评测成片</h3><p>制作工作台的「评测成片」会把当前成片直接送进审核中心。剪映另存的 MP4 仍可手动上传。</p><button class="btn" type="button" data-view="evaluate">去审核中心 →</button></li>
       </ol>
       <div class="workflow-after"><div><strong>人工发布</strong><p>终审通过后，由运营去平台发布。本工作台不自动发布。</p></div><span class="workflow-arrow" aria-hidden="true">→</span><div><strong>数据复盘 · 真实平台数据未接通</strong><p>当前使用演示发布记录和 CSV 数据；尚未自动获取平台指标，也不会自动改写下一条脚本。</p><button class="btn text" type="button" data-view="analytics">查看数据复盘 →</button></div></div>
       <section class="connection-section"><h2>每一环接到哪里</h2><div class="connection-table-wrap"><table class="connection-table"><thead><tr><th>环节</th><th>实际连接方式</th><th>当前配置</th></tr></thead><tbody id="connectionRows"></tbody></table></div></section>
       <section class="connection-section"><h2>页面之间传什么</h2><dl class="handoff-list">
         <div><dt>脚本页 → 剪辑台</dt><dd>传入你选定的那版脚本；生成配音、字幕和镜头计划，不再次改写脚本。</dd></div>
         <div><dt>剪辑台 → 剪映</dt><dd>通过本机工程文件夹交接，包含工程文件和 materials 素材。替换镜头后须点击「写入剪映工程」。</dd></div>
+        <div><dt>制作工作台 → 成片评测</dt><dd>点击「评测成片」直接评测当前预览。镜头已替换但还没重新渲染时，会先合成最新成片。</dd></div>
         <div><dt>剪映 → 成片评测</dt><dd>手动导出 MP4 再上传。剪映里的修改不会自动回传工作台。</dd></div>
         <div><dt>平台 → 数据复盘</dt><dd>当前没有平台账号授权或自动取数；本地复盘脚本可读取约定格式的 CSV，页面展示处理结果。</dd></div>
       </dl></section>
@@ -1099,8 +1109,14 @@ if(STUDIO){
   let reviewUrl=null;
   function renderReview(v,file,taskContext=null){
     const box=$('videoReviewResult'),sec=n=>Number(n).toFixed(1);
-    if(reviewUrl)URL.revokeObjectURL(reviewUrl);
-    reviewUrl=URL.createObjectURL(file);
+    let src;
+    if(file instanceof Blob){
+      if(reviewUrl)URL.revokeObjectURL(reviewUrl);
+      reviewUrl=URL.createObjectURL(file);src=reviewUrl;
+    }else{
+      if(reviewUrl){URL.revokeObjectURL(reviewUrl);reviewUrl=null}
+      src=file.url;
+    }
     const seek=(a,b)=>`<button type="button" class="seek" data-seek="${esc(a)}">${sec(a)}–${sec(b)} 秒</button>`;
     const risks=v.risks.map(r=>{
       const hit=r.status==='hit';
@@ -1118,7 +1134,7 @@ if(STUDIO){
     box.innerHTML=`<div class="score-head"><span class="score-num mono" id="reviewTotal"></span><span> / 100 分</span><span class="band" id="reviewVerdict"></span></div>
       <p class="empty" id="reviewVerdictNote"></p><ul class="review-list" id="reviewReasons"></ul>
       ${v.summary?`<p class="empty">${esc(v.summary)}</p>`:''}
-      <div class="review-result-grid"><section><h3>成片预览</h3><video id="reviewPlayer" src="${reviewUrl}" controls playsinline preload="metadata"></video></section><section><h3>需要核对的画面</h3>
+      <div class="review-result-grid"><section><h3>成片预览</h3><video id="reviewPlayer" src="${src}" controls playsinline preload="metadata"></video></section><section><h3>需要核对的画面</h3>
       <p class="empty">已按每秒 ${esc(v.compliance.fps)} 帧检查 ${esc(v.compliance.checked)} / ${esc(v.compliance.frames)} 帧。${unchecked?`没查成的片段：${unchecked}。`:''}</p>
       <div class="dims">${risks}</div></section></div>
       <details><summary>七维评分与依据</summary>
@@ -1173,13 +1189,16 @@ if(STUDIO){
     $('videoReviewResult').innerHTML='';
   });
   $('reviewGo').addEventListener('click',async()=>{
+    if(state.running||state.exporting){$('reviewStatus').textContent='正在生成中，请完成后再评测。';return}
     const file=$('reviewFile').files[0];
     const taskContext=opsAssessmentContext();
     const ext=file?.name.toLowerCase().split('.').pop();
     if(!file||!['mp4','mov','m4v'].includes(ext)){$('reviewStatus').textContent='请选择 MP4、MOV 或 M4V 视频。';return}
     if(file.size>100*1024*1024){$('reviewStatus').textContent='视频超过 100 MB，请先压缩或选择较小的文件。';return}
     if(file.size===0){$('reviewStatus').textContent='视频文件为空，请重新选择。';return}
-    $('reviewGo').disabled=true;$('reviewFile').disabled=true;
+    $('currentCutCard').hidden=true;
+    $('reviewGo').disabled=true;$('reviewFile').disabled=true;$('reviewCurrentBtn').disabled=true;
+    state.exporting=true;
     $('reviewStatus').textContent=HOSTED?'正在上传视频、按每秒 2 帧检查画面并在服务端转写声音，再请所配置模型评测；请不要关闭页面。':'正在按每秒 2 帧检查画面、在本地转写声音，并请所配置模型评测。24 秒的视频大约 15 秒；首次使用要先下载语音模型，会久一些。';
     $('videoReviewResult').innerHTML='';
     try{
@@ -1192,7 +1211,7 @@ if(STUDIO){
       $('reviewStatus').textContent='评测完成：'+file.name;
       renderReview(v,file,taskContext);
     }catch(err){$('reviewStatus').textContent='评测失败：'+err.message}
-    finally{$('reviewGo').disabled=false;$('reviewFile').disabled=false}
+    finally{state.exporting=false;$('reviewGo').disabled=false;$('reviewFile').disabled=false;$('reviewCurrentBtn').disabled=false;renderEdits()}
   });
   if(isInput)$('askTopic').value=R.title;
   if(!HOSTED) fetch('/api/keys').then(r=>r.json()).then(k=>{
@@ -1475,6 +1494,61 @@ async function exportJianying(){
 $('exportDraftBtn').addEventListener('click',()=>exportJianying());
 $('saveDraftBtn').addEventListener('click',()=>exportJianying());
 if(R.jianying_export)renderJianyingExport(R.jianying_export);
+function roughcutName(url){const name=(url||'').split('?')[0].split('/').pop();return /^roughcut-[a-f0-9]{32}\.mp4$/.test(name)?name:''}
+function showCurrentCut(url){
+  $('currentCutCard').hidden=false;
+  $('currentCutTitle').textContent=R.title||'当前成片';
+  $('currentCutMeta').textContent='run_id '+(R.run_id||'');
+  const video=$('currentCutVideo');
+  if(url&&video.getAttribute('src')!==url){video.poster=thumb(S[0].shots[0].clip);video.src=url}
+}
+function renderReviewProgress(items){
+  $('reviewProgress').innerHTML=items.map(([label,cls])=>`<li class="${cls}"><span>${esc(label)}</span><span>${cls==='done'?'已完成':cls==='run'?'进行中':'未开始'}</span></li>`).join('');
+}
+async function synthesizeRoughcut(){
+  const response=await fetch('/api/export-roughcut',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:R.run_id,swaps:swaps()})});
+  const data=await response.json();if(!response.ok)throw new Error(data.error||'导出失败');
+  state.masterUrl=data.url;state.masterFresh=true;state.t=0;
+  return data;
+}
+async function reviewCurrent(){
+  if(HOSTED){setView('evaluate');return}
+  setView('evaluate');
+  if(!STUDIO){$('reviewStatus').textContent='当前是静态回放。请在本地工作台评测成片。';return}
+  if(state.running||state.exporting){$('reviewStatus').textContent='正在生成中，请完成后再评测。';return}
+  if(!state.gen||R.preview_only){$('reviewStatus').textContent='还没有本机成片。请先在脚本工作室选用一版并完成制作。';return}
+  if(connectionConfig&&connectionConfig.video===false){showCurrentCut(state.masterUrl);$('reviewStatus').textContent='请先在 .env 中填写 DEEPSEEK_API_KEY（或 VIDEO_API_KEY）。';return}
+  const pending=Object.values(swaps()).reduce((n,items)=>n+Object.keys(items).length,0);
+  const stale=pending>0&&!state.masterFresh,missing=!roughcutName(state.masterUrl);
+  const taskContext=opsAssessmentContext();
+  showCurrentCut(state.masterUrl);
+  $('reviewGo').disabled=true;$('reviewFile').disabled=true;$('reviewCurrentBtn').disabled=true;
+  $('videoReviewResult').innerHTML='';
+  state.exporting=true;
+  try{
+    if(stale||missing){
+      renderReviewProgress([['按当前时间线合成最新成片','run'],['检查画面并转写声音',''],['生成评分','']]);
+      $('reviewStatus').textContent=stale?'镜头已替换，正在按当前时间线合成最新成片，随后开始评测。':'还没有可评测的成片，正在按当前时间线合成，随后开始评测。';
+      const rendered=await synthesizeRoughcut();
+      showCurrentCut(rendered.url);renderAll();
+    }
+    const filename=roughcutName(state.masterUrl);
+    if(!filename){$('reviewStatus').textContent='成片不存在，请先在制作工作台合成后再评测。';return}
+    renderReviewProgress([[stale||missing?'按当前时间线合成最新成片':'使用当前预览成片','done'],['检查画面并转写声音','run'],['生成评分','']]);
+    $('reviewStatus').textContent='正在按每秒 2 帧检查画面、在本地转写声音，并请所配置模型评测。请不要关闭页面。';
+    const response=await fetch('/api/video-review-current',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:R.run_id,filename,swaps:swaps()})});
+    const data=await response.json();if(!response.ok||data.error)throw new Error(data.error||'请求失败，请稍后再试。');
+    const v=data.review;
+    if(!v||!Array.isArray(v.dimensions)||!Array.isArray(v.risks)||!v.compliance||!v.draft)throw new Error('评测结果格式不完整，请重试。');
+    if(v.dimensions.some(d=>!Array.isArray(d.criteria)))throw new Error('评测标准格式不完整，请重试。');
+    renderReviewProgress([['使用当前预览成片','done'],['检查画面并转写声音','done'],['生成评分','done']]);
+    if(data.source){$('currentCutTitle').textContent=data.source.title||R.title;$('currentCutMeta').textContent='run_id '+(data.source.run_id||R.run_id)}
+    $('reviewStatus').textContent='评测完成：'+(data.source?.title||R.title||filename);
+    renderReview(v,{name:data.source?.filename||filename,url:data.source?.url||state.masterUrl},taskContext);
+  }catch(error){$('reviewStatus').textContent='评测失败：'+error.message}
+  finally{state.exporting=false;$('reviewGo').disabled=false;$('reviewFile').disabled=false;$('reviewCurrentBtn').disabled=false;renderEdits()}
+}
+$('reviewCurrentBtn').addEventListener('click',()=>reviewCurrent());
 async function renderRoughcut(download){
   if(!STUDIO||HOSTED||state.exporting||state.running)return;
   state.exporting=true;renderEdits();setPlaying(false);
@@ -1482,9 +1556,7 @@ async function renderRoughcut(download){
   $('rerenderBtn').textContent='正在合成…';$('exportRoughcutBtn').textContent='正在合成…';
   status.textContent='正在按当前镜头、配音和字幕合成 9:16 粗剪，请保持页面打开。';
   try{
-    const response=await fetch('/api/export-roughcut',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:R.run_id,swaps:swaps()})});
-    const data=await response.json();if(!response.ok)throw new Error(data.error||'导出失败');
-    state.masterUrl=data.url;state.masterFresh=true;state.t=0;
+    const data=await synthesizeRoughcut();
     const pending=Object.values(swaps()).reduce((n,items)=>n+Object.keys(items).length,0);
     status.replaceChildren(document.createTextNode(pending?'成片已按当前镜头重新合成。这些替换尚未写入剪映，点击「写入剪映工程」会保存同一批镜头。':'成片已更新，与当前时间轴一致。'));
     const link=document.createElement('a');link.href=data.url+(download?'?download':'');link.textContent='下载 MP4';if(download)link.download=data.filename;status.append(' ');status.appendChild(link);

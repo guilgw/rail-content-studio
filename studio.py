@@ -89,6 +89,34 @@ def run_pipeline(args):
             job["error"] = err
 
 
+EXPORT_NAME = re.compile(r"roughcut-[a-f0-9]{32}\.mp4$")
+
+
+def roughcut_path(name):
+    """只接受 output/exports 里由工作台生成的成片，拒绝路径穿越。"""
+    if not isinstance(name, str) or not EXPORT_NAME.fullmatch(name):
+        raise ValueError("只能评测工作台导出的成片。")
+    folder = os.path.realpath(os.path.join(OUT, "exports"))
+    path = os.path.realpath(os.path.join(folder, name))
+    if os.path.dirname(path) != folder or not os.path.isfile(path):
+        raise ValueError("成片不存在，请先在制作工作台合成后再评测。")
+    if not 0 < os.path.getsize(path) <= 100 * 1024 * 1024:
+        raise ValueError("请选择不超过 100 MB 的视频。")
+    return path
+
+
+def remember_preview(result, rendered):
+    """把最新合成的成片记到结果里，评测时不用再从浏览器传文件。"""
+    if result.get("preview_only") or not os.path.isfile(os.path.join(OUT, "result.json")):
+        return
+    result["preview_mp4"] = {"url": rendered["url"], "filename": rendered["filename"], "duration": rendered["duration"]}
+    result.pop("preview_error", None)
+    temporary = os.path.join(OUT, "result.json.tmp")
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(result, handle, ensure_ascii=False, indent=2)
+    os.replace(temporary, os.path.join(OUT, "result.json"))
+
+
 def attach_preview():
     """流水线或换镜头之后，渲染一版与当前时间轴一致的竖屏 MP4。"""
     path = os.path.join(OUT, "result.json")
@@ -252,6 +280,45 @@ class H(BaseHTTPRequestHandler):
                 return self._send(400, {"error": str(e)})
             except Exception:
                 return self._send(500, {"error": "评测失败，请检查依赖和服务配置后重试。"})
+        if path == "/api/video-review-current":
+            if self.headers.get("Origin") not in (f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"):
+                return self._send(403, {"error": "请从本地工作台发起评测。"})
+            with lock:
+                if job["running"]:
+                    return self._send(409, {"error": "正在生成中，请完成后再评测。"})
+                job["running"] = True
+            try:
+                if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                    raise ValueError("评测请求格式不正确。")
+                if not 0 < int(self.headers.get("Content-Length", 0)) <= 32768:
+                    raise ValueError("评测请求过大或为空。")
+                body = self._json()
+                cfg = llm.model_config("video")
+                if not cfg["api_key"]:
+                    raise ValueError("请先在 .env 中填写 DEEPSEEK_API_KEY（或 VIDEO_API_KEY）。")
+                result = read_result()
+                if result.get("preview_only"):
+                    raise ValueError("当前是随仓库附带的演示，还没有本机成片。请先在脚本工作室选用一版并完成制作。")
+                if body.get("run_id") != result.get("run_id"):
+                    return self._send(409, {"error": "粗剪已更新，请刷新后重新评测。"})
+                name = body.get("filename") or (result.get("preview_mp4") or {}).get("filename")
+                if not name:
+                    raise ValueError("成片不存在，请先在制作工作台合成后再评测。")
+                video = roughcut_path(name)
+                draft = roughcut_export.prepare(result, body.get("swaps") or {})
+                from video_review import review_video
+                review = review_video(video, cfg["api_key"], cfg["model"], draft, cfg["base_url"])
+                review["usage"]["provider"] = cfg["provider"]
+                return self._send(200, {"review": review, "source": {
+                    "filename": os.path.basename(video), "url": "/exports/" + os.path.basename(video),
+                    "title": result.get("title") or "", "run_id": result.get("run_id") or ""}})
+            except (ValueError, TypeError) as exc:
+                return self._send(400, {"error": str(exc)})
+            except Exception:
+                return self._send(500, {"error": "评测失败，请检查依赖和服务配置后重试。"})
+            finally:
+                with lock:
+                    job["running"] = False
         if path in ("/api/scripts", "/api/produce", "/api/scripts/open", "/api/scripts/save", "/api/scripts/rewrite", "/api/scripts/import"):
             if self.headers.get("Origin") not in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"):
                 return self._send(403, {"error": "请从本地工作台操作。"})
@@ -354,6 +421,7 @@ class H(BaseHTTPRequestHandler):
                 if body.get("run_id") != result.get("run_id"):
                     return self._send(409, {"error": "粗剪已更新，请刷新后重新导出。"})
                 response = roughcut_export.render(ROOT, OUT, result, body.get("swaps", {}))
+                remember_preview(result, response)
             except (ValueError, TypeError) as exc:
                 return self._send(400, {"error": str(exc)})
             except Exception:
