@@ -125,7 +125,8 @@
     <div class="head-actions compose-only" id="createActions">
       <button type="button" class="btn" data-view="scripts">选用脚本</button>
       <button type="button" class="btn" id="draftBtn" disabled>导入剪映指引</button>
-      <button type="button" class="btn primary" id="saveDraftBtn" disabled>写入剪映工程</button>
+      <button type="button" class="btn primary" id="exportDraftBtn" disabled>导出剪映工程</button>
+      <button type="button" class="btn" id="saveDraftBtn" disabled>写入剪映工程</button>
       <button type="button" class="btn" id="rerenderBtn" disabled>重新渲染成片</button>
       <button type="button" class="btn" id="exportRoughcutBtn" disabled>导出粗剪 MP4</button>
       <button type="button" class="btn" data-view="evaluate">评测成片 →</button>
@@ -133,6 +134,7 @@
   </div>
   <div class="ops-status" id="opsStatus" role="status"></div>
   <div class="ops-status" id="exportRoughcutStatus" role="status" aria-live="polite"></div>
+  <div class="ops-status" id="jianyingExportStatus" role="status" aria-live="polite"></div>
   <div class="task-context compose-only" id="taskContext" hidden><div><span class="context-caption">当前任务</span><select id="activeTaskSelect" aria-label="当前任务"></select><span class="mono" id="activeTaskId"></span></div><div class="context-actions"><span id="activeTaskOwner"></span><button class="btn text" id="editTaskButton" type="button">任务信息</button></div></div>
   <main>
     <section id="overviewView" class="workspace" aria-label="生产总览" hidden>
@@ -391,6 +393,7 @@ function renderInspect(){
 function renderEdits(){
   const busy=!STUDIO||HOSTED||!state.gen||!!state.running||!!state.exporting;
   $('exportRoughcutBtn').disabled=busy;$('rerenderBtn').disabled=busy;
+  if($('exportDraftBtn'))$('exportDraftBtn').disabled=!STUDIO||HOSTED||!state.gen||!!state.running||!!state.exporting||!!R.preview_only;
   const sw=swaps(), n=Object.values(sw).reduce((a,o)=>a+Object.keys(o).length,0);
   $('saveDraftBtn').disabled=!STUDIO||!state.gen||!n||!!R.preview_only||state.running;
   $('saveDraftBtn').textContent=n?'写入剪映 · '+n+' 处修改':'写入剪映工程';
@@ -478,12 +481,7 @@ document.addEventListener('click',async e=>{
   const stockHit=e.target.closest('[data-stock-id]');
   if(stockHit){useStockHit(Number(stockHit.dataset.stockId));return}
   if(e.target.id==='undoSw'){S.forEach(seg=>seg.shots.forEach(sh=>{sh.clip=sh.orig;sh.src_in=sh.orig_src_in}));state.masterUrl=R.preview_mp4?.url||'';state.masterFresh=!!state.masterUrl;renderAll();return}
-  if(e.target.id==='writeDraft'){
-    const b=e.target;b.disabled=true;b.textContent='写入中…';
-    try{const r=await fetch('/api/redraft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({swaps:swaps()})});const j=await r.json();
-      if(!r.ok)throw new Error(j.error||r.status);location.replace('/#done-'+state.t.toFixed(1));location.reload()}
-    catch(err){b.disabled=false;b.textContent='写入剪映';$('edits').insertAdjacentHTML('beforeend',`<div class="err">写入失败：${esc(err.message)}</div>`)}
-  }
+  if(e.target.id==='writeDraft'){exportJianying();return}
 });
 $('play').addEventListener('click',()=>setPlaying(!state.playing));
 $('gen').addEventListener('click',async()=>{
@@ -1161,7 +1159,37 @@ $('modeLabel').textContent=HOSTED?'在线评测':STUDIO?'本地工作台':'运�
 $('durationLabel').textContent=R.total_s.toFixed(1)+'s';$('scrub').max=Math.max(.01,R.total_s-.01);
 $('scrub').addEventListener('input',()=>{if(!state.gen)return;state.t=Number($('scrub').value);const seg=segAt(state.t);state.seg=seg.i;state.shot=shotAt(seg,state.t);renderAll()});
 $('inspect').addEventListener('keydown',e=>{if(!e.target.matches('[data-seg]')||!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const n=S.length,i=+e.target.dataset.seg,next=e.key==='Home'?0:e.key==='End'?n-1:(i+(e.key==='ArrowRight'?1:-1)+n)%n;jumpTo(next,0);$('inspect').querySelector(`[data-seg="${next}"]`).focus()});
-$('saveDraftBtn').addEventListener('click',()=>{if($('writeDraft'))$('writeDraft').click()});
+function renderJianyingExport(info){
+  const box=$('jianyingExportStatus');if(!box)return;
+  const tracks=info.tracks||{};
+  box.replaceChildren();
+  const title=document.createElement('div');
+  title.textContent=info.installed?`草稿名：${info.name}。已写入本机剪映草稿目录。`:`草稿名：${info.name}。未找到本机剪映草稿目录，请下载工程后按说明放入。`;
+  box.appendChild(title);
+  const detail=document.createElement('div');
+  detail.textContent=`画面 ${tracks.video||0} 段 · 配音 ${tracks.audio||0} 段 · 背景音乐 ${tracks.bgm||0} 段 · 字幕 ${tracks.subtitle||0} 段 · 花字 ${tracks.sticker||0} 段`;
+  box.appendChild(detail);
+  if(info.path){const path=document.createElement('div');path.textContent='本机路径：'+info.path;box.appendChild(path)}
+  const hint=document.createElement('div');
+  hint.textContent=info.hint||'打开剪映 → 草稿';
+  box.appendChild(hint);
+  if(info.download){const link=document.createElement('a');link.href=info.download;link.textContent='下载剪映工程';box.appendChild(link)}
+}
+async function exportJianying(){
+  if(!STUDIO||HOSTED||state.exporting||state.running||!state.gen)return;
+  state.exporting=true;renderEdits();
+  const status=$('jianyingExportStatus');
+  status.textContent='正在按当前时间线导出剪映工程，包含已替换的素材…';
+  try{
+    const response=await fetch('/api/export-jianying',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:R.run_id,swaps:swaps()})});
+    const data=await response.json();if(!response.ok)throw new Error(data.error||'导出失败');
+    renderJianyingExport(data);
+  }catch(error){status.textContent='导出剪映工程失败：'+error.message}
+  finally{state.exporting=false;renderEdits()}
+}
+$('exportDraftBtn').addEventListener('click',()=>exportJianying());
+$('saveDraftBtn').addEventListener('click',()=>exportJianying());
+if(R.jianying_export)renderJianyingExport(R.jianying_export);
 async function renderRoughcut(download){
   if(!STUDIO||HOSTED||state.exporting||state.running)return;
   state.exporting=true;renderEdits();setPlaying(false);

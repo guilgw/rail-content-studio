@@ -17,6 +17,8 @@ from urllib.parse import unquote, urlparse
 import llm
 import script_store
 import script_edit
+import jianying_export
+import pipeline
 import roughcut_export
 import stock_media
 import topic_feed
@@ -150,7 +152,7 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, {"deepseek": bool(llm.model_config("script")["api_key"]), "minimax": llm.has("MINIMAX_API_KEY"), "video": bool(llm.model_config("video")["api_key"]),
                                     "pixabay": stock_media.configured(), "models": llm.models_in_use()})
         # 静态文件：clips/、thumbs/；audio/ 直接读 output/tts/（每次生成都是新的）
-        if re.fullmatch(r"/exports/roughcut-[a-f0-9]{32}\.mp4", path):
+        if re.fullmatch(r"/exports/(?:roughcut-[a-f0-9]{32}\.mp4|jianying-[a-f0-9]{32}\.zip)", path):
             f = os.path.join(OUT, "exports", os.path.basename(path))
         elif re.fullmatch(r"/output/stock/px[0-9]+\.(mp4|jpg)", path):
             folder = os.path.realpath(os.path.join(OUT, "stock"))
@@ -400,6 +402,41 @@ class H(BaseHTTPRequestHandler):
             args = ["--topic", topic, "--market", body.get("market") or "英国", "--platform", body.get("platform") or "TikTok"]
             threading.Thread(target=run_pipeline, args=(args,), daemon=True).start()
             return self._send(200, {"ok": True})
+        if path in ("/api/redraft", "/api/export-jianying"):
+            if self.headers.get("Origin") not in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"):
+                return self._send(403, {"error": "请从本地工作台导出剪映工程。"})
+        if path == "/api/export-jianying":
+            with lock:
+                if job["running"]:
+                    return self._send(409, {"error": "当前任务正在处理，请完成后再导出工程。"})
+                job["running"] = True
+            try:
+                if not 0 < int(self.headers.get("Content-Length", 0)) <= 32768:
+                    raise ValueError("导出请求过大或为空。")
+                body = self._json()
+                result = read_result()
+                if body.get("run_id") != result.get("run_id"):
+                    return self._send(409, {"error": "粗剪已更新，请刷新后重新导出。"})
+                real_root = pipeline.DEFAULT_DRAFT_ROOT
+                installed = os.path.isdir(real_root)
+                draft_root = real_root if installed else os.path.join(OUT, "jianying_drafts")
+                info = jianying_export.export_project(result, body.get("swaps") or {}, draft_root, OUT, installed)
+                if not installed:
+                    info["hint"] = "本机未找到剪映草稿目录。请下载压缩包，按其中的说明复制到剪映草稿目录，再打开剪映 → 草稿。"
+                result["draft"] = {"name": info["name"], "path": info["path"], "tracks": info["tracks"], "stickers": info["tracks"]["sticker"], "shots": info["tracks"]["video"]}
+                result["jianying_export"] = info
+                temporary = os.path.join(OUT, "result.json.tmp")
+                with open(temporary, "w", encoding="utf-8") as handle:
+                    json.dump(result, handle, ensure_ascii=False, indent=2)
+                os.replace(temporary, os.path.join(OUT, "result.json"))
+                return self._send(200, info)
+            except (ValueError, TypeError) as exc:
+                return self._send(400, {"error": str(exc)})
+            except Exception:
+                return self._send(500, {"error": "导出剪映工程失败，已有粗剪仍保留。"})
+            finally:
+                with lock:
+                    job["running"] = False
         if path == "/api/redraft":
             with lock:
                 if job["running"]:

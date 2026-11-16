@@ -347,8 +347,9 @@ def write_draft(plan, skill, clips, draft_root, draft_name):
 
 
 def draft_name_for(topic):
-    short = re.sub(r"[\s，,。.！!？?、：:;；/\\\"'“”（）()]+", "", topic)[:12]
-    return f"AI粗剪_{short}_{time.strftime('%m%d-%H%M')}"
+    """用脚本主题做草稿名，去掉 emoji、@ 和其他不能进文件夹名的字符。"""
+    short = re.sub(r"[^\w\u4e00-\u9fff]+", "", topic or "")[:16] or "粗剪"
+    return f"AI粗剪_{short}_{time.strftime('%m%d-%H%M%S')}"
 
 
 def clip_meta(clips, durations):
