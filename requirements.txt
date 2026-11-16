@@ -2,3 +2,5 @@ pyjianyingdraft==0.3.1
 
 imageio-ffmpeg>=0.6,<1
 faster-whisper>=1.1,<2
+# faster-whisper 1.2.x 调用 av.open(metadata_errors=...)。PyAV 16 起去掉了这个参数，19.0.2 会报 unexpected keyword argument。
+av>=11,<16

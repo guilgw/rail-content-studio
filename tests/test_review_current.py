@@ -94,6 +94,17 @@ class ReviewCurrentApiTests(unittest.TestCase):
         self.assertIn("成片不存在", body["error"])
         self.assertNotIn("secret-video-key", json.dumps(body))
 
+    def test_runtime_error_keeps_the_chinese_reason(self):
+        reason = "缺少本地语音识别组件，请运行 pip install -r requirements.txt。"
+        local = f"http://127.0.0.1:{self.server.server_port}"
+        with patch.object(studio.llm, "model_config", return_value={"api_key": "secret-video-key", "model": "fake", "base_url": "https://example.invalid", "provider": "测试"}), \
+                patch("video_review.review_video", side_effect=RuntimeError(reason)):
+            status, body = self.post("/api/video-review-current", local, {"run_id": "run1", "filename": NAME})
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], reason)
+        self.assertNotIn("评测失败，请检查依赖和服务配置后重试。", body["error"])
+        self.assertFalse(self.job["running"])
+
     def test_reviews_the_export_and_applies_swaps_without_uploading(self):
         seen = {}
 
@@ -150,3 +161,6 @@ class ReviewCurrentPageTests(unittest.TestCase):
         self.assertIn("renderReview(v,{name:", page)
         self.assertIn("renderReview(v,file,taskContext)", page)
         self.assertIn('id="reviewCurrentBtn"', Path("index.html").read_text(encoding="utf-8"))
+        requirements = Path("requirements.txt").read_text(encoding="utf-8")
+        self.assertIn("av>=11,<16", requirements)
+        self.assertIn("metadata_errors", Path("README.md").read_text(encoding="utf-8"))

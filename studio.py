@@ -312,7 +312,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {"review": review, "source": {
                     "filename": os.path.basename(video), "url": "/exports/" + os.path.basename(video),
                     "title": result.get("title") or "", "run_id": result.get("run_id") or ""}})
-            except (ValueError, TypeError) as exc:
+            except (ValueError, TypeError, RuntimeError) as exc:
                 return self._send(400, {"error": str(exc)})
             except Exception:
                 return self._send(500, {"error": "评测失败，请检查依赖和服务配置后重试。"})

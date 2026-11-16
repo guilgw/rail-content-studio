@@ -52,7 +52,7 @@ python studio.py
 - 写脚本：配置 `DEEPSEEK_API_KEY`，或 `SCRIPT_BASE_URL`、`SCRIPT_API_KEY`、`SCRIPT_MODEL`。
 - 配音：配置 `MINIMAX_API_KEY`；未配置时回退到 macOS 系统语音。
 - 在线素材：配置 `PIXABAY_API_KEY` 后，本地匹配不足的句子会自动检索 Pixabay 视频（优先竖屏和高清）并下载到 `output/stock/`。页面上也可以按关键词搜索后替换镜头。未配置时只用本地素材，制作工作台会提示。发布前需人工核查人物和商标。
-- 成片评测：配置支持图像输入的模型，填写 `VIDEO_BASE_URL`、`VIDEO_API_KEY`、`VIDEO_MODEL`。兼容格式见 `.env.example`。
+- 成片评测：配置支持图像输入的模型，填写 `VIDEO_BASE_URL`、`VIDEO_API_KEY`、`VIDEO_MODEL`。兼容格式见 `.env.example`。本地转写使用 faster-whisper，它会调用 PyAV 的 `av.open(metadata_errors=...)`。PyAV 16 及以上去掉了这个参数，1.2.1 配 19.0.2 会报 `unexpected keyword argument 'metadata_errors'`。`requirements.txt` 因此把 `av` 限制为 `>=11,<16`（15.1.0 可用）。如果环境里已经装了 16 或更新的版本，重新执行 `python -m pip install -r requirements.txt`。
 - 在“选题与脚本”页输入选题，点“生成脚本”；三版中英文脚本直接显示在页面上，生成脚本不会改变现有预览或配音。
 - 脚本自动收入本地脚本库，可按选题搜索、打开历史版本。旧版留存的最近三版会自动识别；也可点“收录当前作品”保存当前预览作品的脚本。
 - 点“编辑 / 改写”修改英文口播、中文、花字、画面标签和地点；保存时另建历史版本，原稿保留。手动编辑和保存无需模型密钥。
