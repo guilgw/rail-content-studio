@@ -76,6 +76,7 @@
 @media(max-width:640px){html{overflow-x:clip}}
 @media(prefers-reduced-motion:reduce){.workspace,.modal-card{animation:none}html{scroll-behavior:auto}}
 #master{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#111;z-index:0}
+.screen video.on,#master.on{opacity:1}
 .produce-dialog{width:min(560px,calc(100vw - 32px));max-height:min(86vh,720px);overflow:auto;border:1px solid var(--line);border-radius:12px;padding:28px;background:var(--panel);color:var(--fg)}
 .produce-dialog::backdrop{background:#0d202680}
 .produce-dialog h2{font-size:24px;margin:0}
@@ -694,13 +695,15 @@ function renderMonitor(){
     Object.values(vids).forEach(v=>{v.classList.remove('on');if(!v.paused)v.pause()});
     auds.forEach(a=>{if(!a.paused)a.pause()});
     if(master.dataset.src!==state.masterUrl){master.dataset.src=state.masterUrl;master.src=state.masterUrl}
-    master.hidden=false;
+    const cover=thumb(S[0].shots[0].clip);
+    if(cover&&master.getAttribute('poster')!==cover)master.poster=cover;
+    master.hidden=false;master.classList.add('on');$('ph').hidden=true;
     if(Number.isFinite(master.currentTime)&&Math.abs(master.currentTime-state.t)>.35){try{master.currentTime=state.t}catch(_){}}
     if(state.playing&&master.paused)master.play().catch(()=>{});
     if(!state.playing&&!master.paused)master.pause();
     $('sub').hidden=true;$('huazi').hidden=true;
   }else{
-    if(!master.hidden){master.hidden=true;if(!master.paused)master.pause()}
+    if(!master.hidden||master.classList.contains('on')){master.hidden=true;master.classList.remove('on');if(!master.paused)master.pause()}
     Object.entries(vids).forEach(([id,v])=>{const on=id===sh.clip;v.classList.toggle('on',on);
       if(on){const want=sh.src_in+(state.t-sh.start);if(Math.abs(v.currentTime-want)>.3)v.currentTime=want;if(state.playing&&v.paused)v.play().catch(()=>{});if(!state.playing&&!v.paused)v.pause()}else if(!v.paused)v.pause()});
     S.forEach((s,i)=>{const a=auds[i];if(!a)return;const inside=state.t>=s.start&&state.t<s.start+s.voice_s;
@@ -1369,7 +1372,7 @@ function opsRender(view){
   $('activeTaskId').textContent=t?.id||'';$('activeTaskOwner').textContent=t?.owner||'未分配负责人';$('editTaskButton').disabled=!t;
   if(view==='overview')opsOverview();if(view==='topics')opsTopics();if(view==='publish')opsPublish();if(view==='assets')opsAssets();if(view==='evaluate')opsHumanReview();
   if(view==='scripts')opsScriptGate();
-  if(view==='create')$('productionTaskNotice').textContent=t&&t.sessionId!==R.scripts.session_id?'当前预览为最近一次运行「'+R.title+'」，尚未关联当前任务。':'';
+  if(view==='create'){$('productionTaskNotice').textContent=t&&t.sessionId!==R.scripts.session_id?'当前预览为最近一次运行「'+R.title+'」，尚未关联当前任务。':'';if(state.gen)renderMonitor()}
 }
 function opsOverview(){
   $('stageOverview').innerHTML=OPS_STAGES.map(([key,name,action],i)=>`<button type="button" class="stage-stop ${opsFilter===key?'selected':''}" data-stage-filter="${key}" aria-label="查看${name}任务"><span class="stage-number">${String(i+1).padStart(2,'0')}</span><span class="stage-name">${name}<small>${action}</small></span><strong>${ops.tasks.filter(t=>opsStage(t)===key).length}</strong></button>`).join('');

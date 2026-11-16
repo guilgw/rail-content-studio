@@ -572,24 +572,9 @@ def main():
         # 单镜头太长就切成多个镜头（Skill 规则：每个镜头不超过 max_shot_s），后面的镜头优先补上前面没覆盖到的概念
         n_need = min(3, max(1, -(-seg["dur"] // skill["max_shot_s"])))
         n_need = int(n_need)
-        if theme:
-            picked = choose_shots(top, n_need, previous_clip, clip_uses)
-            for shot in picked:
-                clip_uses[shot["id"]] = clip_uses.get(shot["id"], 0) + 1
-        else:
-            picked = [top[0]]
-            covered = set(top[0]["matched"])
-            for cand in top[1:]:
-                if len(picked) >= n_need:
-                    break
-                if set(cand["matched"]) - covered:
-                    picked.append(cand)
-                    covered |= set(cand["matched"])
-            for cand in top[1:]:
-                if len(picked) >= n_need:
-                    break
-                if cand not in picked and not cand["issues"]:
-                    picked.append(cand)
+        picked = choose_shots(top, n_need, previous_clip, clip_uses) or top[:1]
+        for shot in picked:
+            clip_uses[shot["id"]] = clip_uses.get(shot["id"], 0) + 1
         if picked:
             previous_clip = picked[-1]["id"]
         if len(picked) < n_need and not seg["gap"]:

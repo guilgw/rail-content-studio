@@ -22,6 +22,9 @@ class ProduceDialogTests(unittest.TestCase):
         self.assertIn("$('screen').scrollIntoView", page)
         self.assertNotIn("setView('create');", page)
         self.assertIn("confirmScriptChoice", page)
+        self.assertIn("master.classList.add('on')", page)
+        self.assertIn("master.poster=cover", page)
+        self.assertIn("$('ph').hidden=true", page)
         for label, step in (("配音", "生成配音"), ("收集素材", "在线素材补缺"), ("匹配镜头", "本地素材库召回"), ("合成成片", "合成粗剪")):
             self.assertIn(label, page)
             self.assertIn(step, page)

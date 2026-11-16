@@ -55,6 +55,20 @@ class ThemeTests(unittest.TestCase):
         self.assertEqual(openings.count("px30470"), 2)
         self.assertTrue(all(left != right for left, right in zip(openings, openings[1:])))
 
+    def test_plain_footage_also_rotates_and_stops_at_two(self):
+        cands = [{"id": f"m{i:02d}"} for i in range(6)]
+        uses, previous, flat = {}, None, []
+        for _ in range(5):
+            picked = pipeline.choose_shots(cands, 2, previous, uses, 2)
+            self.assertGreaterEqual(len(picked), 1)
+            flat.extend(item["id"] for item in picked)
+            for item in picked:
+                uses[item["id"]] = uses.get(item["id"], 0) + 1
+            previous = picked[-1]["id"]
+        self.assertTrue(all(left != right for left, right in zip(flat, flat[1:])))
+        self.assertTrue(all(count <= 2 for count in uses.values()))
+        self.assertLessEqual(flat.count("m05"), 2)
+
     def test_downloaded_clip_is_used_even_when_its_tags_do_not_say_bee(self):
         clips = [clip("px30470", ["bee", "honey"]), clip("px367164", ["insect", "macro"]), clip("m13", ["ticket"])]
         clips[1]["for_theme"] = ["bee"]
