@@ -19,6 +19,7 @@ import time
 import pyJianYingDraft as jy
 
 import llm
+import stock_media
 from draft_review import review_draft
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -54,7 +55,11 @@ def log(step, msg, t0):
 
 def load(name):
     with open(os.path.join(DATA, name), encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if name == "library.json":
+        known = {clip["id"] for clip in data["clips"]}
+        data["clips"].extend(clip for clip in stock_media.extra_clips(OUT) if clip.get("id") not in known)
+    return data
 
 
 def words(text):
@@ -191,35 +196,77 @@ def place_conflict(line_places, clip_places):
     return False
 
 
-def retrieve(line, clips, durations):
+def retrieve(line, clips, durations, theme=None):
     need = line.get("tags") or concepts_of(line["en"])
     places = line.get("places") if line.get("places") is not None else places_of(line["en"])
+    theme = [t for t in (theme or []) if t]
     ranked = []
     # DeepSeek 给的概念按重要性排序，越靠前权重越高；存档脚本的关键词表没有顺序，一视同仁
     weights = [1 / (k + 1) for k in range(len(need))] if line.get("tags") else [1] * len(need)
     for c in clips:
         matched = [x for x in need if x in c["tags"]]
-        coverage = sum(w for x, w in zip(need, weights) if x in c["tags"]) / sum(weights) if need else 0
+        sentence = sum(w for x, w in zip(need, weights) if x in c["tags"]) / sum(weights) if need else 0
+        theme_hit = 1 if stock_media.clip_matches_theme(c, theme) else 0
+        if theme_hit:
+            matched = list(dict.fromkeys([t for t in theme if t in c.get("tags", []) or t in (c.get("for_theme") or [])] + matched))
+        # 有主题时，主题对上占六成，本句画面占四成；纯火车镜头不能只靠行程词排到蜜蜂前面。
+        coverage = 0.62 * theme_hit + 0.38 * sentence if theme else sentence
         excluded = None
         if place_conflict(places, c.get("places", [])):
             excluded = f"地点不符：画面是{c['location']}，脚本说的是{'、'.join(places)}"
         loc_hit = 1 if (places and set(places) & set(c.get("places", []))) else 0
         ranked.append({"id": c["id"], "title": c["title"], "coverage": round(coverage, 2), "matched": matched,
                        "quality": c["quality"], "issues": c["issues"], "excluded": excluded, "loc_hit": loc_hit,
-                       "clip_s": round(durations[c["id"]], 2)})
+                       "theme_hit": theme_hit, "clip_s": round(durations[c["id"]], 2)})
     # 旅行视频里"是不是那个地方"很要紧：内容已经对上一半以上、地点也对得上的镜头加 0.4
     boost = lambda r: 0.4 if r["loc_hit"] and r["coverage"] >= 0.5 else 0
-    ranked.sort(key=lambda r: (round(r["coverage"] + boost(r), 3), -len(r["issues"]), r["quality"]), reverse=True)
-    valid = [r for r in ranked if not r["excluded"] and r["coverage"] > 0]
-    bad = [r for r in ranked if r["excluded"] and r["coverage"] > 0]
-    # 候选里每个概念至少有一个镜头能覆盖（避免 5 个候选都是同一类画面，后面的镜头补不上没覆盖的概念）
-    cands = valid[:5]
-    for x in need:
-        if valid and x not in valid[0]["matched"] and not any(x in c["matched"] for c in cands):
-            extra = next((c for c in valid if x in c["matched"]), None)
-            if extra:
-                cands.append(extra)
+    ranked.sort(key=lambda r: (round(r["coverage"] + boost(r), 3), r["theme_hit"], -len(r["issues"]), r["quality"]), reverse=True)
+    valid = [r for r in ranked if not r["excluded"] and (r["coverage"] > 0 or r["theme_hit"])]
+    bad = [r for r in ranked if r["excluded"] and (r["coverage"] > 0 or r["theme_hit"])]
+    if theme:
+        themed = [r for r in valid if r["theme_hit"]]
+        plain = [r for r in valid if not r["theme_hit"]]
+        cands = []
+        for item in themed[:8] + plain[:4]:
+            if item["id"] not in {c["id"] for c in cands}:
+                cands.append(item)
+    else:
+        # 候选里每个概念至少有一个镜头能覆盖（避免 5 个候选都是同一类画面，后面的镜头补不上没覆盖的概念）
+        cands = valid[:5]
+        for x in need:
+            if valid and x not in valid[0]["matched"] and not any(x in c["matched"] for c in cands):
+                extra = next((c for c in valid if x in c["matched"]), None)
+                if extra:
+                    cands.append(extra)
     return need, places, cands, bad[:1]
+
+
+def choose_shots(cands, n_need, previous_id=None, uses=None, limit=2):
+    """主题镜头和行程镜头交替。同一段素材整条片子默认最多用 2 次，用得少的主题镜头优先。"""
+    uses = uses or {}
+    limit = max(1, int(limit))
+    picked, prev = [], previous_id
+
+    def pool(group):
+        blocked = {item["id"] for item in picked}
+        fresh = [item for item in group if uses.get(item["id"], 0) < limit and item["id"] != prev and item["id"] not in blocked]
+        return sorted(fresh, key=lambda item: (uses.get(item["id"], 0), group.index(item)))
+
+    for i in range(max(1, int(n_need))):
+        themed = [item for item in cands if item.get("theme_hit")]
+        plain = [item for item in cands if not item.get("theme_hit")]
+        groups = [themed, plain] if themed and i % 2 == 0 else [plain, themed] if themed else [cands]
+        choice = next((pool(group)[0] for group in groups if pool(group)), None)
+        if choice is None:
+            blocked = {item["id"] for item in picked}
+            rest = [item for item in cands if item["id"] not in blocked and item["id"] != prev]
+            under = [item for item in rest if uses.get(item["id"], 0) < limit]
+            choice = (under or rest or [item for item in cands if item["id"] not in blocked] or [None])[0]
+        if choice is None:
+            break
+        picked.append(choice)
+        prev = choice["id"]
+    return picked
 
 
 def wrap(text, n):
@@ -300,14 +347,22 @@ def write_draft(plan, skill, clips, draft_root, draft_name):
 
 
 def draft_name_for(topic):
-    short = re.sub(r"[\s，,。.！!？?、：:;；/\\\"'“”（）()]+", "", topic)[:12]
-    return f"AI粗剪_{short}_{time.strftime('%m%d-%H%M')}"
+    """用脚本主题做草稿名，去掉 emoji、@ 和其他不能进文件夹名的字符。"""
+    short = re.sub(r"[^\w\u4e00-\u9fff]+", "", topic or "")[:16] or "粗剪"
+    return f"AI粗剪_{short}_{time.strftime('%m%d-%H%M%S')}"
 
 
 def clip_meta(clips, durations):
-    return {c["id"]: {"title": c["title"], "file": c["file"], "tags": c["tags"], "location": c["location"],
-                      "quality": c["quality"], "issues": c["issues"], "pexels": c["pexels"],
-                      "clip_s": round(durations[c["id"]], 2)} for c in clips}
+    meta = {}
+    for c in clips:
+        item = {"title": c["title"], "file": c["file"], "tags": c["tags"], "location": c["location"],
+                "quality": c["quality"], "issues": c["issues"], "pexels": c.get("pexels") or c.get("page") or "",
+                "places": c.get("places") or [], "clip_s": round(durations[c["id"]], 2)}
+        if c.get("stock"):
+            item.update(provider="Pixabay", author=c.get("author") or "", license=c.get("license") or stock_media.LICENSE,
+                        thumb=c.get("thumb") or "", stock=True, page=c.get("page") or item["pexels"])
+        meta[c["id"]] = item
+    return meta
 
 
 def save_result(result):
@@ -445,7 +500,12 @@ def main():
         log("写脚本", f"{who} 出 {len(variants)} 版初稿，审核拦下 {len(rejected)} 版，采用 {chosen['id']} 版" + ("" if passed else "（所有版本均有问题，需人工修改）"), t0)
     log("读取 Skill", f"{skill['name']}：{len(skill.get('rules', []))} 条规则，单镜头 ≤ {skill['max_shot_s']} 秒、字幕/花字样式、利益点和结尾钩子", t0)
 
-    durations = {c["id"]: jy.VideoMaterial(os.path.join(ROOT, c["file"])).duration / US for c in clips}
+    durations = {}
+    for c in clips:
+        if c.get("duration"):
+            durations[c["id"]] = float(c["duration"])
+        else:
+            durations[c["id"]] = jy.VideoMaterial(os.path.join(ROOT, c["file"])).duration / US
     log("读取素材库", f"{len(clips)} 段实拍，已打标签（地点、场景、清晰度、风险）", t0)
 
     # 配音
@@ -488,11 +548,18 @@ def main():
     total_s = round(t, 2)
     log("按语义和气口分段", f"{len(lines)} 段，总时长 {total_s} 秒", t0)
 
+    theme = stock_media.visual_theme(topic_title, lines)
+    log("视觉主题", "、".join(theme) if theme else "这条约片没有需要单独强调的视觉主题", t0)
+    clips, durations, stock_report = stock_media.fill_gaps(lines, clips, durations, retrieve, ROOT, OUT, skill["max_shot_s"], theme=theme)
+    log("在线素材补缺", stock_report["message"], t0)
+
     # 素材召回 + 地点规则
     plan = []
     n_excluded = 0
+    previous_clip = None
+    clip_uses = {}
     for i, ln in enumerate(lines):
-        need, places, top, bad = retrieve(ln, clips, durations)
+        need, places, top, bad = retrieve(ln, clips, durations, theme)
         n_excluded += len(bad)
         seg = {"i": i, "en": ln["en"], "zh": ln.get("zh", ""), "role": ln.get("role", ""), "start": ln["start"], "dur": ln["seg_s"],
                "voice_s": ln["voice_s"], "audio": ln["audio"], "need": need, "places": places,
@@ -506,19 +573,11 @@ def main():
         # 单镜头太长就切成多个镜头（Skill 规则：每个镜头不超过 max_shot_s），后面的镜头优先补上前面没覆盖到的概念
         n_need = min(3, max(1, -(-seg["dur"] // skill["max_shot_s"])))
         n_need = int(n_need)
-        picked = [top[0]]
-        covered = set(top[0]["matched"])
-        for cand in top[1:]:
-            if len(picked) >= n_need:
-                break
-            if set(cand["matched"]) - covered:
-                picked.append(cand)
-                covered |= set(cand["matched"])
-        for cand in top[1:]:
-            if len(picked) >= n_need:
-                break
-            if cand not in picked and not cand["issues"]:
-                picked.append(cand)
+        picked = choose_shots(top, n_need, previous_clip, clip_uses) or top[:1]
+        for shot in picked:
+            clip_uses[shot["id"]] = clip_uses.get(shot["id"], 0) + 1
+        if picked:
+            previous_clip = picked[-1]["id"]
         if len(picked) < n_need and not seg["gap"]:
             seg["gap"] = f"素材缺口：和「{'、'.join(need)}」相关的镜头不够，这句只能用 {len(picked)} 个镜头撑 {seg['dur']:.1f} 秒"
         each = round(seg["dur"] / len(picked), 3)
@@ -564,7 +623,8 @@ def main():
               "skill": {**skill, "voice": {**voice, "used": voice_name, "engine": engine}}, "total_s": total_s, "segments": plan,
               "rules": rule_out, "score": review,
               "log": log_lines, "draft": {"name": draft_name, "path": draft_dir, "shots": n_shots, "stickers": n_st},
-              "usage": usage_info, "models": models or None, "clips": clip_meta(clips, durations)}
+              "usage": usage_info, "models": models or None, "clips": clip_meta(clips, durations),
+              "theme": theme, "stock": stock_report}
     save_result(result)
     print("done:", os.path.join(OUT, "result.json"))
 
