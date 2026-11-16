@@ -87,6 +87,62 @@ PLAIN = {"app", "city", "depart", "euston", "highland", "journey", "loch", "lond
          "phone", "platform", "rail", "railway", "scotland", "sleeper", "station", "ticket", "track", "train"}
 
 
+SCENE = ("countryside", "mountain", "lake", "snow", "flower", "garden", "meadow", "hive", "cabin", "window")
+ANGLES = {
+    "bee": ("flower", "flying", "hive", "countryside", "garden"),
+    "butterfly": ("flower", "flying", "garden"),
+    "matterhorn": ("peak", "snow", "alpine"),
+    "alps": ("mountain", "valley", "train"),
+}
+MAX_DOWNLOADS = 8
+
+
+def download_limit(override=None):
+    """每次制作最多下载几段主题素材，默认 6，可在 .env 用 THEME_DOWNLOAD_LIMIT 改成 1–8。"""
+    if override is None:
+        override = (llm.load_env().get("THEME_DOWNLOAD_LIMIT") or "6").strip()
+    try:
+        count = int(override)
+    except (TypeError, ValueError):
+        count = 6
+    return max(1, min(MAX_DOWNLOADS, count))
+
+
+def clip_matches_theme(clip, theme):
+    if not theme:
+        return False
+    marked = {str(token).lower() for token in clip.get("for_theme") or []}
+    if marked & set(theme):
+        return True
+    for tag in clip.get("tags") or []:
+        word = str(tag).lower()
+        if word in theme or EN_THEME.get(word, word) in theme:
+            return True
+    return False
+
+
+def theme_queries(theme, lines):
+    """先搜「主题 + 这一句的场景」，再补 flower、flying、hive 这类不同角度。"""
+    queries = []
+
+    def add(text):
+        text = " ".join(str(text).split())
+        if text and text not in queries:
+            queries.append(text)
+
+    for token in theme:
+        for line in lines or []:
+            tags = [tag for tag in (line.get("tags") or []) if tag not in PLAIN and tag not in theme]
+            picked = next((tag for tag in SCENE if tag in tags), None)
+            if picked:
+                add(f"{token} {picked}")
+            elif tags:
+                add(token + " " + " ".join(tags[:2]))
+        for angle in ANGLES.get(token, ("close up", "nature")):
+            add(f"{token} {angle}")
+    return queries
+
+
 def lacks_theme_shot(clips, theme, need):
     """还没有主题画面，或这句有具体场景、但没有同时带主题和该场景的素材。"""
     if not theme:
@@ -360,7 +416,7 @@ def _save_extra(out, clips):
     os.replace(temporary, path)
 
 
-def import_video(root, out, video_id, tags, places, opener=urllib.request.urlopen):
+def import_video(root, out, video_id, tags, places, opener=urllib.request.urlopen, theme=None):
     if not isinstance(video_id, int) or not 0 < video_id < 10**12:
         raise ValueError("素材编号无效。")
     existing = next((clip for clip in extra_clips(out) if clip["id"] == f"px{video_id}"), None)
@@ -394,7 +450,8 @@ def import_video(root, out, video_id, tags, places, opener=urllib.request.urlope
               "tags": tag_list, "location": "、".join(place_list) or "Pixabay", "quality": 4 if min(chosen["width"], chosen["height"]) >= 720 else 3,
               "issues": [], "pexels": _public_url(raw.get("pageURL"), PAGE_HOST) or LICENSE, "places": place_list, "author": str(raw.get("user") or "")[:80],
               "license": LICENSE, "provider": "Pixabay", "page": _public_url(raw.get("pageURL"), PAGE_HOST) or LICENSE,
-              "thumb": f"output/stock/px{video_id}.jpg" if has_thumb else "", "stock": True, "duration": round(float(duration), 2)}
+              "thumb": f"output/stock/px{video_id}.jpg" if has_thumb else "", "stock": True,
+              "for_theme": labels(theme or [], 3), "duration": round(float(duration), 2)}
     saved = [clip for clip in extra_clips(out) if clip["id"] != record["id"]]
     saved.append(record)
     _save_extra(out, saved)
@@ -407,7 +464,7 @@ def public_clip(record, duration):
             "issues": record.get("issues") or [], "pexels": record.get("page") or record.get("pexels") or LICENSE,
             "clip_s": round(float(duration), 2), "provider": "Pixabay", "author": record.get("author") or "",
             "license": record.get("license") or LICENSE, "thumb": record.get("thumb") or "", "stock": True,
-            "page": record.get("page") or LICENSE}
+            "for_theme": list(record.get("for_theme") or []), "page": record.get("page") or LICENSE}
 
 
 def remember_in_result(out, clip):
@@ -433,17 +490,76 @@ def _weak(line, clips, durations, retrieve, max_shot_s):
     return len(usable) < n_need and float(top[0].get("coverage") or 0) < 0.8, need, labels(places if line.get("places") is None else line.get("places"), 6)
 
 
-def fill_gaps(lines, clips, durations, retrieve, root, out, max_shot_s=3.0, search_fn=None, importer=None, theme=None):
-    """本地匹配度低，或还没有主题画面时，自动下载一条 Pixabay 视频。失败时保留本地结果。"""
+def _remember_clip(clips, durations, clip, hit, theme):
+    if any(item["id"] == clip["id"] for item in clips):
+        return False
+    clips.append({"id": clip["id"], "file": clip["file"], "title": clip["title"], "tags": list(clip.get("tags") or []),
+                  "location": clip.get("location") or "", "quality": clip.get("quality") or 3, "issues": [],
+                  "pexels": clip.get("pexels") or LICENSE, "places": clip.get("places") or [], "author": clip.get("author") or "",
+                  "license": LICENSE, "provider": "Pixabay", "page": clip.get("page") or LICENSE, "thumb": clip.get("thumb") or "",
+                  "for_theme": list(clip.get("for_theme") or theme), "stock": True})
+    durations[clip["id"]] = float(clip.get("clip_s") or hit.get("duration") or 1)
+    return True
+
+
+def _known_ids(clips):
+    known = set()
+    for item in clips:
+        known.add(item.get("id"))
+        text = str(item.get("id") or "")
+        if text.startswith("px") and text[2:].isdigit():
+            known.add(int(text[2:]))
+    return known
+
+
+def _import_query(query, clips, durations, imported, search_fn, importer, theme, places):
+    hits = search_fn(query)
+    known = _known_ids(clips)
+    fresh = [item for item in hits if item.get("id") not in known and f"px{item.get('id')}" not in known]
+    hit = next((item for item in fresh if item.get("portrait") or item.get("hd")), None) or (fresh[0] if fresh else None)
+    if not hit:
+        return
+    clip = dict(importer(int(hit["id"]), [], places))
+    clip["for_theme"] = list(clip.get("for_theme") or theme)
+    if _remember_clip(clips, durations, clip, hit, theme):
+        imported.append({"id": clip["id"], "title": clip["title"], "author": clip.get("author") or "", "page": clip.get("page") or LICENSE, "license": LICENSE})
+
+
+def fill_gaps(lines, clips, durations, retrieve, root, out, max_shot_s=3.0, search_fn=None, importer=None, theme=None, limit=None):
+    """主题画面不够时按多个搜索词下载；另外补上本地完全对不上的句子。失败时保留已有结果。"""
     clips, durations = list(clips), dict(durations)
-    theme = visual_theme("", []) if theme is None else list(theme)
+    theme = [] if theme is None else list(theme)
+    limit = download_limit(limit)
     if not configured() and importer is None:
         return clips, durations, {"configured": False, "imported": [], "theme": theme, "message": MISSING}
     search_fn = search_fn or (lambda text: search(text)["hits"])
-    importer = importer or (lambda video_id, tags, places: import_video(root, out, video_id, tags, places))
+    importer = importer or (lambda video_id, tags, places: import_video(root, out, video_id, tags, places, theme=theme))
     imported, seen = [], set()
+    if theme:
+        target = min(max(len(lines), 1), limit)
+        line_scenes = set()
+        for line in lines:
+            picked = next((tag for tag in SCENE if tag in (line.get("tags") or []) and tag not in theme), None)
+            if picked:
+                line_scenes.add(picked)
+        for query in theme_queries(theme, lines):
+            if len(imported) >= limit or query in seen:
+                continue
+            words = [word for word in query.split() if word not in theme]
+            theme_count = sum(clip_matches_theme(clip, theme) for clip in clips)
+            covered = any(clip_matches_theme(clip, theme) and set(words) & {str(tag).lower() for tag in clip.get("tags") or []} for clip in clips)
+            if any(word in line_scenes for word in words):
+                if covered:
+                    continue
+            elif theme_count >= target or covered:
+                continue
+            seen.add(query)
+            try:
+                _import_query(query, clips, durations, imported, search_fn, importer, theme, [])
+            except Exception:
+                continue
     for line in lines:
-        if len(imported) >= 6:
+        if len(imported) >= limit:
             break
         try:
             weak, need, places = _weak(line, clips, durations, retrieve, max_shot_s)
@@ -459,26 +575,11 @@ def fill_gaps(lines, clips, durations, retrieve, root, out, max_shot_s=3.0, sear
             continue
         seen.add(query)
         try:
-            hits = search_fn(query)
-            hit = next((item for item in hits if item.get("portrait") or item.get("hd")), None) or (hits[0] if hits else None)
-            if not hit:
-                continue
-            # 不把本句需求传给入库标签；Pixabay 自己的 tags 才是这段视频的内容。
-            clip = importer(int(hit["id"]), [], places)
-            if not line.get("tags"):
-                line["tags"] = labels(clip.get("tags") or need)
+            _import_query(query, clips, durations, imported, search_fn, importer, theme, places)
+            if clips and not line.get("tags"):
+                line["tags"] = labels(clips[-1].get("tags") or need)
         except Exception:
             continue
-        if any(item["id"] == clip["id"] for item in clips):
-            imported.append({"id": clip["id"], "title": clip["title"], "author": clip.get("author") or "", "page": clip.get("page") or LICENSE, "license": LICENSE})
-            continue
-        clips.append({"id": clip["id"], "file": clip["file"], "title": clip["title"], "tags": list(clip.get("tags") or []),
-                      "location": clip.get("location") or "", "quality": clip.get("quality") or 3, "issues": [],
-                      "pexels": clip.get("pexels") or LICENSE, "places": clip.get("places") or [], "author": clip.get("author") or "",
-                      "license": LICENSE, "provider": "Pixabay", "page": clip.get("page") or LICENSE, "thumb": clip.get("thumb") or "",
-                      "stock": True})
-        durations[clip["id"]] = float(clip.get("clip_s") or hit.get("duration") or 1)
-        imported.append({"id": clip["id"], "title": clip["title"], "author": clip.get("author") or "", "page": clip.get("page") or LICENSE, "license": LICENSE})
     if imported:
         subject = "、".join(theme)
         message = f"已按主题「{subject}」补充 {len(imported)} 段素材。" if subject else f"本地匹配不足的 {len(imported)} 句已自动选用 Pixabay 素材。"

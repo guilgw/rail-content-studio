@@ -33,6 +33,36 @@ class ThemeTests(unittest.TestCase):
         self.assertTrue(cands[0]["theme_hit"])
         self.assertIn("m41", [item["id"] for item in cands])
 
+    def test_theme_clips_rotate_and_a_single_clip_stops_at_two(self):
+        bees = [{"id": "px30470", "theme_hit": 1}, {"id": "px367164", "theme_hit": 1}, {"id": "m41", "theme_hit": 0}]
+        uses, previous, openings = {}, None, []
+        for _ in range(5):
+            picked = pipeline.choose_shots(bees, 1, previous, uses, 2)
+            openings.append(picked[0]["id"])
+            uses[picked[0]["id"]] = uses.get(picked[0]["id"], 0) + 1
+            previous = picked[0]["id"]
+        self.assertEqual(openings, ["px30470", "px367164", "px30470", "px367164", "m41"])
+        self.assertLessEqual(uses["px30470"], 2)
+        self.assertEqual(uses["px367164"], 2)
+
+        solo = [{"id": "px30470", "theme_hit": 1}, {"id": "m13", "theme_hit": 0}, {"id": "m41", "theme_hit": 0}]
+        uses, previous, openings = {}, None, []
+        for _ in range(5):
+            picked = pipeline.choose_shots(solo, 1, previous, uses, 2)
+            openings.append(picked[0]["id"])
+            uses[picked[0]["id"]] = uses.get(picked[0]["id"], 0) + 1
+            previous = picked[0]["id"]
+        self.assertEqual(openings.count("px30470"), 2)
+        self.assertTrue(all(left != right for left, right in zip(openings, openings[1:])))
+
+    def test_downloaded_clip_is_used_even_when_its_tags_do_not_say_bee(self):
+        clips = [clip("px30470", ["bee", "honey"]), clip("px367164", ["insect", "macro"]), clip("m13", ["ticket"])]
+        clips[1]["for_theme"] = ["bee"]
+        durations = {item["id"]: 6 for item in clips}
+        _need, _places, cands, _bad = pipeline.retrieve(
+            {"en": "Save on the fare.", "tags": ["ticket"], "places": []}, clips, durations, ["bee"])
+        self.assertEqual([item["id"] for item in cands if item["theme_hit"]], ["px30470", "px367164"])
+
     def test_shots_alternate_theme_and_do_not_repeat_the_neighbor(self):
         cands = [{"id": "bee", "theme_hit": 1, "issues": []}, {"id": "train", "theme_hit": 0, "issues": []},
                  {"id": "hill", "theme_hit": 0, "issues": []}]
@@ -88,7 +118,7 @@ class ThemeTests(unittest.TestCase):
         with patch.object(stock_media, "english_query", return_value="countryside"):
             _clips, _durations, report = stock_media.fill_gaps(
                 lines, local, {"bee": 5, "m22": 5}, retrieve, ".", ".", search_fn=search_fn, importer=importer, theme=["bee"])
-        self.assertEqual(queries, ["bee countryside"])
+        self.assertIn("bee countryside", queries)
         self.assertEqual(report["imported"][0]["id"], "px51")
 
     def test_an_existing_theme_clip_is_reused_for_a_generic_line(self):
@@ -104,3 +134,28 @@ class ThemeTests(unittest.TestCase):
         _clips, _durations, report = stock_media.fill_gaps(
             lines, local, {"m13": 5, "bee": 5}, retrieve, ".", ".", search_fn=search_fn, importer=lambda *a: None, theme=["bee"])
         self.assertEqual(report["imported"], [])
+
+    def test_theme_search_stops_at_the_configured_download_limit(self):
+        lines = [{"zh": "票", "tags": ["ticket"], "places": [], "seg_s": 3, "en": "Tickets."} for _ in range(4)]
+        queries = []
+
+        def retrieve(line, clips, durations):
+            return line["tags"], [], [{"id": "m13", "coverage": 0.8, "issues": [], "matched": ["ticket"]}], []
+
+        def search_fn(query):
+            queries.append(query)
+            return [{"id": 100 + len(queries), "portrait": True, "hd": True, "duration": 5}]
+
+        def importer(video_id, tags, places):
+            self.assertEqual(tags, [])
+            return {"id": f"px{video_id}", "title": "bee", "file": f"output/stock/px{video_id}.mp4", "tags": ["bee"],
+                    "places": [], "quality": 4, "clip_s": 5, "author": "Ada", "page": stock_media.LICENSE,
+                    "pexels": stock_media.LICENSE, "thumb": "", "for_theme": ["bee"]}
+
+        _clips, _durations, report = stock_media.fill_gaps(
+            lines, [clip("m13", ["ticket"])], {"m13": 5}, retrieve, ".", ".", search_fn=search_fn, importer=importer,
+            theme=["bee"], limit=3)
+        self.assertEqual(queries[:3], ["bee flower", "bee flying", "bee hive"])
+        self.assertEqual(len(report["imported"]), 3)
+        self.assertEqual(stock_media.download_limit(9), 8)
+        self.assertEqual(stock_media.download_limit("nope"), 6)

@@ -206,9 +206,9 @@ def retrieve(line, clips, durations, theme=None):
     for c in clips:
         matched = [x for x in need if x in c["tags"]]
         sentence = sum(w for x, w in zip(need, weights) if x in c["tags"]) / sum(weights) if need else 0
-        theme_hit = 1 if theme and any(t in c.get("tags", []) for t in theme) else 0
+        theme_hit = 1 if stock_media.clip_matches_theme(c, theme) else 0
         if theme_hit:
-            matched = list(dict.fromkeys([t for t in theme if t in c.get("tags", [])] + matched))
+            matched = list(dict.fromkeys([t for t in theme if t in c.get("tags", []) or t in (c.get("for_theme") or [])] + matched))
         # 有主题时，主题对上占六成，本句画面占四成；纯火车镜头不能只靠行程词排到蜜蜂前面。
         coverage = 0.62 * theme_hit + 0.38 * sentence if theme else sentence
         excluded = None
@@ -227,7 +227,7 @@ def retrieve(line, clips, durations, theme=None):
         themed = [r for r in valid if r["theme_hit"]]
         plain = [r for r in valid if not r["theme_hit"]]
         cands = []
-        for item in themed[:3] + plain[:3]:
+        for item in themed[:8] + plain[:4]:
             if item["id"] not in {c["id"] for c in cands}:
                 cands.append(item)
     else:
@@ -241,24 +241,28 @@ def retrieve(line, clips, durations, theme=None):
     return need, places, cands, bad[:1]
 
 
-def choose_shots(cands, n_need, previous_id=None):
-    """主题镜头和行程镜头交替，并且不和上一个镜头用同一段素材。"""
+def choose_shots(cands, n_need, previous_id=None, uses=None, limit=2):
+    """主题镜头和行程镜头交替。同一段素材整条片子默认最多用 2 次，用得少的主题镜头优先。"""
+    uses = uses or {}
+    limit = max(1, int(limit))
     picked, prev = [], previous_id
+
+    def pool(group):
+        blocked = {item["id"] for item in picked}
+        fresh = [item for item in group if uses.get(item["id"], 0) < limit and item["id"] != prev and item["id"] not in blocked]
+        return sorted(fresh, key=lambda item: (uses.get(item["id"], 0), group.index(item)))
+
     for i in range(max(1, int(n_need))):
-        themed = [c for c in cands if c.get("theme_hit")]
-        plain = [c for c in cands if not c.get("theme_hit")]
+        themed = [item for item in cands if item.get("theme_hit")]
+        plain = [item for item in cands if not item.get("theme_hit")]
         groups = [themed, plain] if themed and i % 2 == 0 else [plain, themed] if themed else [cands]
-        used = {c["id"] for c in picked}
-        choice = None
-        for group in groups:
-            choice = next((c for c in group if c["id"] != prev and c["id"] not in used), None)
-            if choice:
-                break
-        if not choice:
-            choice = next((c for c in cands if c["id"] != prev and c["id"] not in used), None)
-        if not choice:
-            choice = next((c for c in cands if c["id"] not in used), None)
-        if not choice:
+        choice = next((pool(group)[0] for group in groups if pool(group)), None)
+        if choice is None:
+            blocked = {item["id"] for item in picked}
+            rest = [item for item in cands if item["id"] not in blocked and item["id"] != prev]
+            under = [item for item in rest if uses.get(item["id"], 0) < limit]
+            choice = (under or rest or [item for item in cands if item["id"] not in blocked] or [None])[0]
+        if choice is None:
             break
         picked.append(choice)
         prev = choice["id"]
@@ -552,6 +556,7 @@ def main():
     plan = []
     n_excluded = 0
     previous_clip = None
+    clip_uses = {}
     for i, ln in enumerate(lines):
         need, places, top, bad = retrieve(ln, clips, durations, theme)
         n_excluded += len(bad)
@@ -568,7 +573,9 @@ def main():
         n_need = min(3, max(1, -(-seg["dur"] // skill["max_shot_s"])))
         n_need = int(n_need)
         if theme:
-            picked = choose_shots(top, n_need, previous_clip)
+            picked = choose_shots(top, n_need, previous_clip, clip_uses)
+            for shot in picked:
+                clip_uses[shot["id"]] = clip_uses.get(shot["id"], 0) + 1
         else:
             picked = [top[0]]
             covered = set(top[0]["matched"])
