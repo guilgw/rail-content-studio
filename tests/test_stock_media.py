@@ -152,14 +152,15 @@ class StockMediaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch.object(llm, "load_env", return_value={"PIXABAY_API_KEY": SECRET}), \
                 patch.object(stock_media, "_probe", return_value=6.5), patch.object(stock_media, "_ffmpeg", return_value=None):
             root, out = Path(folder), Path(folder) / "output"
-            clip = stock_media.import_video(str(root), str(out), 125, ["night", "train"], ["苏格兰"], opener)
+            clip = stock_media.import_video(str(root), str(out), 125, ["matterhorn", "mountain"], ["苏格兰"], opener)
             again = stock_media.import_video(str(root), str(out), 125, ["night"], ["苏格兰"], opener)
             self.assertEqual(again["id"], "px125")
             self.assertEqual(clip["author"], "Ada")
             self.assertEqual(clip["license"], stock_media.LICENSE)
             self.assertIn("pixabay.com/videos", clip["page"])
             self.assertEqual(clip["places"], ["苏格兰"])
-            self.assertIn("night", clip["tags"])
+            self.assertEqual(clip["tags"], ["night", "train", "station"])
+            self.assertNotIn("matterhorn", clip["tags"])
             self.assertTrue(clip["stock"])
             saved = json.loads((out / "stock-library.json").read_text())
             blob = json.dumps(saved, ensure_ascii=False) + json.dumps(clip)
@@ -197,7 +198,7 @@ class StockMediaTests(unittest.TestCase):
 
         with patch.object(stock_media, "english_query", return_value="night station"):
             clips, durations, report = stock_media.fill_gaps(lines, local, {"m1": 5}, retrieve, ".", ".", search_fn=search_fn, importer=importer)
-        self.assertEqual(imported, [(125, ["night"], ["伦敦"])])
+        self.assertEqual(imported, [(125, [], ["伦敦"])])
         self.assertIn("px125", durations)
         self.assertEqual(report["imported"][0]["author"], "Ada")
         self.assertIn("人物和商标", report["message"])

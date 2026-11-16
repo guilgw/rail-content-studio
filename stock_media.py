@@ -22,6 +22,15 @@ MAX_LIBRARY = 200
 LOW_COVERAGE = 0.34
 NOTICE = "Pixabay 素材发布前请人工核查画面中的人物和商标。"
 MISSING = "未配置 Pixabay 密钥，只使用本地素材。"
+# 这些词描述行程本身。主题是选题里更具体的意象，例如蜜蜂，而不是火车。
+GENERIC = {
+    "app", "cabin", "city", "countryside", "depart", "euston", "highland", "journey", "lake",
+    "loch", "london", "morning", "mountain", "night", "phone", "platform", "rail", "railway",
+    "scotland", "sleeper", "station", "ticket", "track", "train", "travel", "window",
+}
+ZH_THEME = (("小蜜蜂", "bee"), ("蜜蜂", "bee"), ("蜂巢", "bee"), ("蜂蜜", "bee"), ("蝴蝶", "butterfly"), ("马特洪", "matterhorn"), ("阿尔卑斯", "alps"))
+EN_THEME = {"bee": "bee", "bees": "bee", "honey": "bee", "honeybee": "bee", "hive": "bee",
+            "butterfly": "butterfly", "matterhorn": "matterhorn", "alps": "alps", "alpine": "alps"}
 
 
 def configured():
@@ -43,6 +52,53 @@ def labels(values, limit=8):
         if len(out) >= limit:
             break
     return out
+
+
+def visual_theme(title, lines=None):
+    """从选题和脚本里抽出整条片子的视觉主题。普通行程词不算主题。"""
+    found = []
+
+    def add(token):
+        token = EN_THEME.get(token, token)
+        if token and token not in GENERIC and token not in found:
+            found.append(token)
+
+    text = title or ""
+    for zh, token in ZH_THEME:
+        if zh in text:
+            add(token)
+    for word in re.findall(r"[A-Za-z]+", text):
+        mapped = EN_THEME.get(word.lower())
+        if mapped:
+            add(mapped)
+    for line in lines or []:
+        english = (line.get("en") or "").lower()
+        for word, token in EN_THEME.items():
+            if re.search(rf"\b{re.escape(word)}\b", english):
+                add(token)
+        for tag in line.get("tags") or []:
+            if isinstance(tag, str) and tag.lower() not in GENERIC:
+                add(tag.lower())
+    return found[:3]
+
+
+# 这些是行程里的功能性画面。已经有主题镜头时，不必再为它们单独下载“蜜蜂看手机”。
+PLAIN = {"app", "city", "depart", "euston", "highland", "journey", "loch", "london", "morning", "night",
+         "phone", "platform", "rail", "railway", "scotland", "sleeper", "station", "ticket", "track", "train"}
+
+
+def lacks_theme_shot(clips, theme, need):
+    """还没有主题画面，或这句有具体场景、但没有同时带主题和该场景的素材。"""
+    if not theme:
+        return False
+    themed = [clip for clip in clips if set(theme) & set(clip.get("tags") or [])]
+    if not themed:
+        return True
+    # 乡村、车窗、车厢这类场景要和主题一起出现；票券、手机则复用已有主题镜头。
+    scene = [tag for tag in need or [] if tag not in PLAIN and tag not in theme]
+    if not scene:
+        return False
+    return not any(set(scene) & set(clip.get("tags") or []) for clip in themed)
 
 
 def english_query(text, tags=None):
@@ -331,10 +387,11 @@ def import_video(root, out, video_id, tags, places, opener=urllib.request.urlope
     thumb = os.path.join(folder, f"px{video_id}.jpg")
     has_thumb = _thumbnail(video, thumb, _public_url(chosen.get("thumbnail"), DOWNLOAD_HOST), opener)
     duration = _probe(video) or max(1, int(raw.get("duration") or 1))
-    tag_list = labels([*(tags or []), *re.findall(r"[A-Za-z][A-Za-z0-9_-]{1,30}", str(raw.get("tags") or ""))])
+    # 标签只采用 Pixabay 对这段视频的描述，不把句子的画面需求写进去。
+    tag_list = labels(re.findall(r"[A-Za-z][A-Za-z0-9_-]{1,24}", str(raw.get("tags") or "").lower()))
     place_list = labels(places, 6)
     record = {"id": f"px{video_id}", "file": f"output/stock/px{video_id}.mp4", "title": (str(raw.get("tags") or "Pixabay 视频").strip() or "Pixabay 视频")[:80],
-              "tags": tag_list or ["train"], "location": "、".join(place_list) or "Pixabay", "quality": 4 if min(chosen["width"], chosen["height"]) >= 720 else 3,
+              "tags": tag_list, "location": "、".join(place_list) or "Pixabay", "quality": 4 if min(chosen["width"], chosen["height"]) >= 720 else 3,
               "issues": [], "pexels": _public_url(raw.get("pageURL"), PAGE_HOST) or LICENSE, "places": place_list, "author": str(raw.get("user") or "")[:80],
               "license": LICENSE, "provider": "Pixabay", "page": _public_url(raw.get("pageURL"), PAGE_HOST) or LICENSE,
               "thumb": f"output/stock/px{video_id}.jpg" if has_thumb else "", "stock": True, "duration": round(float(duration), 2)}
@@ -376,11 +433,12 @@ def _weak(line, clips, durations, retrieve, max_shot_s):
     return len(usable) < n_need and float(top[0].get("coverage") or 0) < 0.8, need, labels(places if line.get("places") is None else line.get("places"), 6)
 
 
-def fill_gaps(lines, clips, durations, retrieve, root, out, max_shot_s=3.0, search_fn=None, importer=None):
-    """本地匹配度低或镜头不够的句子，自动下载一条 Pixabay 视频。失败时保留本地结果。"""
+def fill_gaps(lines, clips, durations, retrieve, root, out, max_shot_s=3.0, search_fn=None, importer=None, theme=None):
+    """本地匹配度低，或还没有主题画面时，自动下载一条 Pixabay 视频。失败时保留本地结果。"""
     clips, durations = list(clips), dict(durations)
+    theme = visual_theme("", []) if theme is None else list(theme)
     if not configured() and importer is None:
-        return clips, durations, {"configured": False, "imported": [], "message": MISSING}
+        return clips, durations, {"configured": False, "imported": [], "theme": theme, "message": MISSING}
     search_fn = search_fn or (lambda text: search(text)["hits"])
     importer = importer or (lambda video_id, tags, places: import_video(root, out, video_id, tags, places))
     imported, seen = [], set()
@@ -391,9 +449,12 @@ def fill_gaps(lines, clips, durations, retrieve, root, out, max_shot_s=3.0, sear
             weak, need, places = _weak(line, clips, durations, retrieve, max_shot_s)
         except Exception:
             continue
-        if not weak:
+        if not weak and not lacks_theme_shot(clips, theme, need):
             continue
-        query = english_query(" ".join([line.get("zh") or "", " ".join(need)]).strip(), need)
+        query = english_query(" ".join([line.get("zh") or "", *theme, *need]).strip(), [*theme, *need])
+        for token in theme:
+            if token not in query.split():
+                query = f"{token} {query}".strip()
         if query in seen:
             continue
         seen.add(query)
@@ -402,7 +463,8 @@ def fill_gaps(lines, clips, durations, retrieve, root, out, max_shot_s=3.0, sear
             hit = next((item for item in hits if item.get("portrait") or item.get("hd")), None) or (hits[0] if hits else None)
             if not hit:
                 continue
-            clip = importer(int(hit["id"]), need or re.findall(r"[a-z]{3,}", query.lower())[:4], places)
+            # 不把本句需求传给入库标签；Pixabay 自己的 tags 才是这段视频的内容。
+            clip = importer(int(hit["id"]), [], places)
             if not line.get("tags"):
                 line["tags"] = labels(clip.get("tags") or need)
         except Exception:
@@ -410,15 +472,17 @@ def fill_gaps(lines, clips, durations, retrieve, root, out, max_shot_s=3.0, sear
         if any(item["id"] == clip["id"] for item in clips):
             imported.append({"id": clip["id"], "title": clip["title"], "author": clip.get("author") or "", "page": clip.get("page") or LICENSE, "license": LICENSE})
             continue
-        clips.append({"id": clip["id"], "file": clip["file"], "title": clip["title"], "tags": clip.get("tags") or need or ["train"],
+        clips.append({"id": clip["id"], "file": clip["file"], "title": clip["title"], "tags": list(clip.get("tags") or []),
                       "location": clip.get("location") or "", "quality": clip.get("quality") or 3, "issues": [],
-                      "pexels": clip.get("pexels") or LICENSE, "places": clip.get("places") or places, "author": clip.get("author") or "",
+                      "pexels": clip.get("pexels") or LICENSE, "places": clip.get("places") or [], "author": clip.get("author") or "",
                       "license": LICENSE, "provider": "Pixabay", "page": clip.get("page") or LICENSE, "thumb": clip.get("thumb") or "",
                       "stock": True})
         durations[clip["id"]] = float(clip.get("clip_s") or hit.get("duration") or 1)
         imported.append({"id": clip["id"], "title": clip["title"], "author": clip.get("author") or "", "page": clip.get("page") or LICENSE, "license": LICENSE})
     if imported:
-        message = f"本地匹配不足的 {len(imported)} 句已自动选用 Pixabay 素材。{NOTICE}"
+        subject = "、".join(theme)
+        message = f"已按主题「{subject}」补充 {len(imported)} 段素材。" if subject else f"本地匹配不足的 {len(imported)} 句已自动选用 Pixabay 素材。"
+        message += NOTICE
     else:
         message = "已检查在线素材，没有需要自动下载的新镜头。" if configured() or importer else MISSING
-    return clips, durations, {"configured": configured(), "imported": imported, "message": message}
+    return clips, durations, {"configured": configured(), "imported": imported, "theme": theme, "message": message}
